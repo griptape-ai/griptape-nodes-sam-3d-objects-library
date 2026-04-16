@@ -89,20 +89,25 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         return sentinel.read_text().strip() == self._get_submodule_commit(submodule_path)
 
     def _install_from_requirements(self, submodule_path: Path) -> None:
-        """Install dependencies from the submodule's requirements.txt.
+        """Install only the inference dependencies from requirements.inference.txt.
 
-        This preserves platform markers, version pins, and extra-index-url
-        directives exactly as the model author specified.
+        The full requirements.txt is a bloated dev environment dump with many
+        packages that don't work on Windows. We only need the minimal inference deps.
         """
-        requirements_file = submodule_path / "requirements.txt"
-        if not requirements_file.exists():
-            logger.info("No requirements.txt found in submodule, skipping")
-            return
         venv_python = self._get_venv_python_path()
         self._ensure_pip()
-        logger.info(f"Installing requirements from {requirements_file}...")
-        subprocess.check_call([str(venv_python), "-m", "pip", "install", "-r", str(requirements_file)])
-        logger.info("Requirements installed successfully")
+
+        # Install only from requirements.inference.txt (minimal deps for inference)
+        # Use --no-build-isolation so packages that need torch at build time can find it
+        inference_reqs = submodule_path / "requirements.inference.txt"
+        if inference_reqs.exists():
+            logger.info(f"Installing inference dependencies from {inference_reqs}...")
+            subprocess.check_call(
+                [str(venv_python), "-m", "pip", "install", "--no-build-isolation", "-r", str(inference_reqs)]
+            )
+            logger.info("Inference dependencies installed successfully")
+        else:
+            logger.warning(f"No requirements.inference.txt found at {inference_reqs}")
 
     def _install_package(self, submodule_path: Path) -> None:
         if str(submodule_path) not in sys.path:

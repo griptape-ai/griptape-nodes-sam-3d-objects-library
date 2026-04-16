@@ -9,7 +9,15 @@
         "engine_version": "0.80.0",
         "tags": ["Griptape", "AI", "Image", "3D", "Reconstruction", "Segmentation"],
         "dependencies": {
-            "pip_dependencies": []
+            "pip_dependencies": [
+                "torch",
+                "torchvision",
+                "torchaudio"
+            ],
+            "pip_install_flags": [
+                "--extra-index-url",
+                "https://download.pytorch.org/whl/cu128"
+            ]
         },
         "resources": {
             "required": {
