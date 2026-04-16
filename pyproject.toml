@@ -1,7 +1,7 @@
 [project]
-name = "example_nodes_template"
+name = "griptape-nodes-sam-3d-objects-library"
 version = "0.1.0"
-description = "Template for Users to create Custom Libraries and Nodes"
+description = "Griptape Nodes SAM 3D Objects Library"
 authors = [{ name = "Your Name", email = "you@example.com" }]
 readme = "README.md"
 requires-python = "~=3.12.0"
@@ -9,6 +9,9 @@ dependencies = ["griptape-nodes"]
 
 [tool.uv.sources]
 griptape-nodes = { git = "https://github.com/griptape-ai/griptape-nodes", rev = "latest" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["griptape_nodes_sam_3d_objects_library"]
 
 [build-system]
 requires = ["hatchling"]
@@ -20,6 +23,12 @@ dev = ["pyright>=1.1.396", "pytest-asyncio>=0.21.0", "ruff>=0.8.0", "pytest"]
 [tool.ruff]
 line-length = 120
 target-version = "py312"
+exclude = [
+  ".venv",
+  "**/node_modules",
+  "**/__pycache__",
+  "griptape_nodes_sam_3d_objects_library/sam-3d-objects",
+]
 
 [tool.ruff.lint]
 select = [
@@ -46,6 +55,8 @@ line-ending = "auto"
 venvPath = "."
 venv = ".venv"
 include = ["."]
-exclude = [".venv", "**/node_modules", "**/__pycache__", "**/.*", "templates"]
+exclude = [".venv", "**/node_modules", "**/__pycache__", "**/.*", "templates", "griptape_nodes_sam_3d_objects_library/sam-3d-objects"]
 pythonVersion = "3.12"
 reportIncompatibleMethodOverride = false
+reportMissingImports = false
+reportMissingModuleSource = false

@@ -1,0 +1,50 @@
+{
+    "name": "Griptape Nodes SAM 3D Objects Library",
+    "library_schema_version": "0.5.0",
+    "advanced_library_path": "sam_3d_objects_library_advanced.py",
+    "metadata": {
+        "author": "Griptape, Inc.",
+        "description": "SAM 3D Objects is a foundation model that reconstructs full 3D shape geometry, texture, and spatial layout from a single 2D image. Given an image and a binary object mask, it produces a Gaussian splat (PLY format) representing the 3D structure of the masked object. It supports both single-object and multi-object reconstruction workflows and handles real-world challenges such as occlusion, clutter, and unusual poses.",
+        "library_version": "0.1.0",
+        "engine_version": "0.80.0",
+        "tags": ["Griptape", "AI", "Image", "3D", "Reconstruction", "Segmentation"],
+        "dependencies": {
+            "pip_dependencies": []
+        },
+        "resources": {
+            "required": {
+                "compute": [["cuda"], "has_any"]
+            }
+        }
+    },
+    "categories": [
+        {
+            "reconstruction": {
+                "color": "border-green-500",
+                "title": "3D Reconstruction",
+                "description": "Reconstruct 3D objects from images",
+                "icon": "Box"
+            }
+        }
+    ],
+    "nodes": [
+        {
+            "class_name": "ReconstructSingleObject3D",
+            "file_path": "reconstruct_single_object_3d.py",
+            "metadata": {
+                "category": "reconstruction",
+                "description": "Reconstructs a 3D Gaussian splat of a single masked object from a 2D image. Takes an image and a binary mask (white object on black background), runs SAM 3D Objects inference, and outputs a PLY file path containing the Gaussian splat.",
+                "display_name": "Reconstruct Single Object 3D"
+            }
+        },
+        {
+            "class_name": "ReconstructMultiObject3D",
+            "file_path": "reconstruct_multi_object_3d.py",
+            "metadata": {
+                "category": "reconstruction",
+                "description": "Reconstructs a merged 3D Gaussian splat scene from multiple masked objects in a single image. Takes an image and a list of mask images, runs SAM 3D Objects inference once per mask, merges all Gaussians into a single scene, and outputs a PLY file.",
+                "display_name": "Reconstruct Multi-Object 3D"
+            }
+        }
+    ]
+}

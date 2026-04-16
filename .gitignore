@@ -1,3 +1,10 @@
 .env
 .venv
-example_nodes_template/__pycache__/
+.scratch/
+__pycache__/
+*.py[cod]
+.venv/
+.installed_commit
+dist/
+build/
+*.egg-info/
