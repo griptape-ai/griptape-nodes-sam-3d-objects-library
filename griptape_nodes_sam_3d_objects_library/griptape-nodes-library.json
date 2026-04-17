@@ -10,13 +10,13 @@
         "tags": ["Griptape", "AI", "Image", "3D", "Reconstruction", "Segmentation"],
         "dependencies": {
             "pip_dependencies": [
-                "torch",
-                "torchvision",
-                "torchaudio"
+                "torch==2.5.1",
+                "torchaudio==2.5.1",
+                "torchvision==0.20.1"
             ],
             "pip_install_flags": [
                 "--extra-index-url",
-                "https://download.pytorch.org/whl/cu128"
+                "https://download.pytorch.org/whl/cu121"
             ]
         },
         "resources": {

@@ -1,4 +1,5 @@
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -59,6 +60,28 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
             return
         subprocess.check_call([str(venv_python), "-m", "ensurepip", "--upgrade"])
 
+    def _get_torch_version(self) -> str:
+        """Return the base torch version (e.g. '2.5.1') installed in the venv."""
+        venv_python = self._get_venv_python_path()
+        result = subprocess.run(
+            [str(venv_python), "-c", "import torch; print(torch.__version__.split('+')[0])"],
+            capture_output=True, text=True,
+        )
+        return result.stdout.strip()
+
+    def _get_cuda_home(self) -> str | None:
+        """Return the CUDA toolkit path bundled with torch (nvidia-cuda-nvcc) in the venv."""
+        venv_python = self._get_venv_python_path()
+        result = subprocess.run(
+            [str(venv_python), "-c",
+             "from pathlib import Path; import nvidia.cuda_nvcc; print(Path(nvidia.cuda_nvcc.__file__).parent)"],
+            capture_output=True, text=True,
+        )
+        path = result.stdout.strip()
+        if result.returncode == 0 and path and os.path.isdir(path):
+            return path
+        return None
+
     def _get_submodule_commit(self, submodule_path: Path) -> str:
         """Return the HEAD commit SHA of the submodule (the version pinned by the library author)."""
         repo = pygit2.Repository(str(submodule_path))
@@ -99,11 +122,41 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
 
         # Install only from requirements.inference.txt (minimal deps for inference)
         # Use --no-build-isolation so packages that need torch at build time can find it
+        # kaolin wheels are hosted on NVIDIA's S3 bucket and MUST be installed from
+        # the correct torch-version-specific find-links page to avoid ABI mismatches.
         inference_reqs = submodule_path / "requirements.inference.txt"
         if inference_reqs.exists():
             logger.info(f"Installing inference dependencies from {inference_reqs}...")
+            torch_ver = self._get_torch_version()
+            kaolin_find_links = f"https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-{torch_ver}_cu121.html"
+            env = os.environ.copy()
+            cuda_home = self._get_cuda_home()
+            if cuda_home:
+                env["CUDA_HOME"] = cuda_home
+                logger.info(f"Using CUDA_HOME={cuda_home}")
+            # Install kaolin first from the correct find-links to avoid ABI mismatch
+            # Use --no-deps --no-index so pip only grabs the wheel from find-links
+            # without trying to resolve kaolin's deps from that same (limited) index.
+            logger.info(f"Installing kaolin from {kaolin_find_links}...")
             subprocess.check_call(
-                [str(venv_python), "-m", "pip", "install", "--no-build-isolation", "-r", str(inference_reqs)]
+                [
+                    str(venv_python), "-m", "pip", "install",
+                    "--no-build-isolation",
+                    "--no-index",
+                    "--no-deps",
+                    "-f", kaolin_find_links,
+                    "kaolin==0.17.0",
+                ],
+                env=env,
+            )
+            # Then install remaining deps from requirements file
+            subprocess.check_call(
+                [
+                    str(venv_python), "-m", "pip", "install",
+                    "--no-build-isolation",
+                    "-r", str(inference_reqs),
+                ],
+                env=env,
             )
             logger.info("Inference dependencies installed successfully")
         else:
@@ -126,6 +179,10 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         if not patch_script.exists():
             logger.warning(f"Hydra patch script not found at {patch_script}, skipping")
             return
+        venv_python = self._get_venv_python_path()
+        # hydra-core is required by the patch script but not in requirements.inference.txt
+        logger.info("Installing hydra-core for patching...")
+        subprocess.check_call([str(venv_python), "-m", "pip", "install", "hydra-core==1.3.2"])
         logger.info("Applying hydra patch...")
-        subprocess.check_call([str(patch_script)], cwd=str(submodule_path))
+        subprocess.check_call([str(venv_python), str(patch_script)], cwd=str(submodule_path))
         logger.info("Hydra patch applied successfully")

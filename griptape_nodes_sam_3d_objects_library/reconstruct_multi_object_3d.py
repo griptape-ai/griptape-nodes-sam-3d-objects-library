@@ -1,7 +1,9 @@
 import json
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 from typing import Any
 
 import numpy as np
@@ -21,9 +23,6 @@ class ReconstructMultiObject3D(SuccessFailureNode):
     Takes an image and a list of mask images, runs SAM 3D Objects inference once per mask,
     merges all Gaussians into a single scene, and outputs a PLY file.
     """
-
-    # Class-level model cache - shared across all instances, keyed on config_path
-    _inference_cache: dict[str, Any] = {}
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -122,78 +121,50 @@ class ReconstructMultiObject3D(SuccessFailureNode):
         assert __file__ is not None
         return os.path.join(os.path.dirname(__file__), "sam-3d-objects")
 
-    def _ensure_sys_path(self) -> None:
-        """Ensure the submodule root and notebook directory are on sys.path."""
-        submodule_root = self._get_submodule_root()
-        notebook_dir = os.path.join(submodule_root, "notebook")
-        if submodule_root not in sys.path:
-            sys.path.insert(0, submodule_root)
-        if notebook_dir not in sys.path:
-            sys.path.insert(0, notebook_dir)
-
-    def _load_inference(self, config_path: str) -> Any:
-        """Load and cache the Inference object keyed on config_path."""
-        if config_path in ReconstructMultiObject3D._inference_cache:
-            return ReconstructMultiObject3D._inference_cache[config_path]
-
-        self._ensure_sys_path()
-
-        # DEFERRED IMPORT: inference.py is in notebook/ inside the submodule and is
-        # not an installable package. It must be accessed via sys.path injection.
-        # notebook/inference.py unconditionally does:
-        #   os.environ["CUDA_HOME"] = os.environ["CONDA_PREFIX"]
-        # so CONDA_PREFIX must exist before import or it raises KeyError.
-        # In non-conda environments (e.g. Griptape Nodes), fall back to CUDA_HOME
-        # or the standard CUDA install path.
-        if "CONDA_PREFIX" not in os.environ:
-            os.environ["CONDA_PREFIX"] = os.environ.get("CUDA_HOME", "/usr/local/cuda")
-        os.environ["LIDRA_SKIP_INIT"] = "true"
-
-        from inference import Inference  # type: ignore[import-not-found]  # noqa: PLC0415
-
-        logger.info(f"Loading SAM 3D Objects inference pipeline from {config_path}...")
-        inference = Inference(config_path, compile=False)
-        ReconstructMultiObject3D._inference_cache[config_path] = inference
-        logger.info("Inference pipeline loaded successfully")
-        return inference
+    def _get_venv_python(self) -> str:
+        assert __file__ is not None
+        lib_root = os.path.dirname(__file__)
+        if sys.platform == "win32":
+            return os.path.join(lib_root, ".venv", "Scripts", "python.exe")
+        return os.path.join(lib_root, ".venv", "bin", "python")
 
     def _artifact_to_bytes(self, artifact: ImageArtifact | ImageUrlArtifact) -> bytes:
         """Read raw bytes from either an ImageArtifact (bytes value) or ImageUrlArtifact (path value)."""
         if isinstance(artifact, ImageArtifact):
-            # ImageArtifact.value is bytes - use to_bytes() to get the raw bytes
             return artifact.to_bytes()
-        # ImageUrlArtifact.value is a str path or macro path
         artifact_path = artifact.value
         if not isinstance(artifact_path, str):
             raise ValueError(f"ImageUrlArtifact.value must be a str, got {type(artifact_path)}")
         return File(artifact_path).read_bytes()
 
-    def _read_image_as_array(self, artifact: ImageArtifact | ImageUrlArtifact) -> np.ndarray:
-        """Read an image artifact into a uint8 numpy array (HxWxC)."""
+    def _save_artifact_to_temp(self, artifact: ImageArtifact | ImageUrlArtifact, suffix: str = ".png") -> str:
+        """Save an image artifact to a temp file and return the path."""
         from io import BytesIO  # noqa: PLC0415
 
         image_bytes = self._artifact_to_bytes(artifact)
-        pil_image = Image.open(BytesIO(image_bytes)).convert("RGB")
-        return np.array(pil_image, dtype=np.uint8)
+        pil_image = Image.open(BytesIO(image_bytes))
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        pil_image.save(tmp.name)
+        tmp.close()
+        return tmp.name
 
-    def _read_mask_as_bool_array(self, url: str) -> np.ndarray:
-        """Read a mask URL into a 2D boolean numpy array (True = object pixel)."""
+    def _save_mask_url_to_temp(self, url: str) -> str:
+        """Save a mask URL to a temp file and return the path."""
         from io import BytesIO  # noqa: PLC0415
 
         mask_bytes = File(url).read_bytes()
         pil_mask = Image.open(BytesIO(mask_bytes))
-        mask_array = np.array(pil_mask)
-        # Reduce to 2D if the mask has channels
-        if mask_array.ndim == 3:
-            mask_array = mask_array[..., -1]
-        return mask_array > 0
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        pil_mask.save(tmp.name)
+        tmp.close()
+        return tmp.name
 
     def process(self) -> AsyncResult[None]:
         """Kick off async inference."""
         yield lambda: self._run_inference()
 
     def _run_inference(self) -> None:
-        """Run SAM 3D Objects multi-object inference (called in background thread)."""
+        """Run SAM 3D Objects multi-object inference via subprocess."""
         image_artifact = self.parameter_values.get("image")
         masks_str = self.parameter_values.get("masks")
         config_path = self.parameter_values.get("config_path")
@@ -209,22 +180,49 @@ class ReconstructMultiObject3D(SuccessFailureNode):
             raise ValueError("output_ply_path is required")
 
         mask_urls: list[str] = json.loads(masks_str)
-        image_array = self._read_image_as_array(image_artifact)
-        mask_arrays = [self._read_mask_as_bool_array(url) for url in mask_urls]
 
         self._seed_param.preprocess()
         seed = self._seed_param.get_seed()
 
-        inference = self._load_inference(config_path)
+        # Save inputs to temp files so the subprocess can read them
+        image_path = self._save_artifact_to_temp(image_artifact, suffix=".png")
+        mask_paths = [self._save_mask_url_to_temp(url) for url in mask_urls]
 
-        # DEFERRED IMPORT: make_scene is in notebook/inference.py, accessed via sys.path injection
-        from inference import make_scene  # type: ignore[import-not-found]  # noqa: PLC0415
+        try:
+            request = {
+                "action": "multi",
+                "image_path": image_path,
+                "mask_paths": mask_paths,
+                "config_path": config_path,
+                "output_ply_path": output_ply_path,
+                "seed": seed,
+                "submodule_root": self._get_submodule_root(),
+            }
 
-        logger.info(f"Running SAM 3D Objects multi-object inference on {len(mask_arrays)} masks...")
-        outputs = [inference(image_array, mask_array, seed=seed) for mask_array in mask_arrays]
+            runner_script = os.path.join(os.path.dirname(__file__), "_subprocess_inference.py")
+            venv_python = self._get_venv_python()
+            logger.info(f"Running SAM 3D Objects multi-object inference on {len(mask_paths)} masks in subprocess...")
 
-        scene_gs = make_scene(*outputs)
-        scene_gs.save_ply(output_ply_path)
-        logger.info(f"Saved merged Gaussian splat PLY to {output_ply_path}")
+            proc = subprocess.run(
+                [venv_python, runner_script],
+                input=json.dumps(request) + "\n",
+                capture_output=True,
+                text=True,
+            )
 
-        self.parameter_output_values["ply_path"] = output_ply_path
+            if proc.returncode != 0:
+                raise RuntimeError(f"Inference subprocess failed (exit {proc.returncode}):\n{proc.stderr}")
+
+            result = json.loads(proc.stdout.strip().split("\n")[-1])
+            if result.get("status") != "ok":
+                raise RuntimeError(f"Inference error: {result.get('message', 'unknown error')}")
+
+            logger.info(f"Saved merged Gaussian splat PLY to {output_ply_path}")
+            self.parameter_output_values["ply_path"] = result["ply_path"]
+        finally:
+            # Clean up temp files
+            for path in [image_path, *mask_paths]:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
