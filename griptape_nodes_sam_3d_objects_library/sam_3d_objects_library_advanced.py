@@ -69,18 +69,26 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         )
         return result.stdout.strip()
 
-    def _get_cuda_home(self) -> str | None:
-        """Return the CUDA toolkit path bundled with torch (nvidia-cuda-nvcc) in the venv."""
-        venv_python = self._get_venv_python_path()
-        result = subprocess.run(
-            [str(venv_python), "-c",
-             "from pathlib import Path; import nvidia.cuda_nvcc; print(Path(nvidia.cuda_nvcc.__file__).parent)"],
-            capture_output=True, text=True,
+    def _get_cuda_home(self) -> str:
+        """Return a usable CUDA toolkit path with nvcc for building extensions.
+
+        Searches for a system CUDA toolkit (>= 12.x) since the pip nvidia-cuda-nvcc
+        package doesn't include a full nvcc binary.
+        """
+        # Prefer CUDA_HOME if already set
+        env_home = os.environ.get("CUDA_HOME")
+        if env_home and Path(env_home, "bin", "nvcc").exists():
+            return env_home
+        # Search common system locations
+        for candidate in sorted(Path("/usr/local").glob("cuda-12.*"), reverse=True):
+            if (candidate / "bin" / "nvcc").exists():
+                return str(candidate)
+        if Path("/usr/local/cuda/bin/nvcc").exists():
+            return "/usr/local/cuda"
+        raise RuntimeError(
+            "No usable CUDA toolkit found. Install the CUDA toolkit (>=12.x) "
+            "or set CUDA_HOME to a directory containing bin/nvcc."
         )
-        path = result.stdout.strip()
-        if result.returncode == 0 and path and os.path.isdir(path):
-            return path
-        return None
 
     def _get_submodule_commit(self, submodule_path: Path) -> str:
         """Return the HEAD commit SHA of the submodule (the version pinned by the library author)."""
@@ -112,55 +120,109 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         return sentinel.read_text().strip() == self._get_submodule_commit(submodule_path)
 
     def _install_from_requirements(self, submodule_path: Path) -> None:
-        """Install only the inference dependencies from requirements.inference.txt.
+        """Install all inference dependencies required by sam-3d-objects.
 
-        The full requirements.txt is a bloated dev environment dump with many
-        packages that don't work on Windows. We only need the minimal inference deps.
+        The upstream requirements.inference.txt is incomplete — many transitive
+        dependencies needed at runtime are only listed in the full requirements.txt
+        (which contains many unrelated dev packages).  Additionally, several packages
+        require special install procedures:
+          - kaolin: must come from NVIDIA's S3 wheels matched to the torch+cuda version.
+          - gsplat / pytorch3d: must be built from source with --no-build-isolation
+            and CUDA_HOME pointing at a system CUDA toolkit.
+          - MoGe / utils3d: must be installed from specific git commits.
+          - spconv: needs the -cu121 variant.
+          - numpy must stay <2.0 (kaolin constraint).
+
+        This method therefore ignores requirements.inference.txt and performs a
+        deterministic, ordered install sequence.
         """
         venv_python = self._get_venv_python_path()
         self._ensure_pip()
 
-        # Install only from requirements.inference.txt (minimal deps for inference)
-        # Use --no-build-isolation so packages that need torch at build time can find it
-        # kaolin wheels are hosted on NVIDIA's S3 bucket and MUST be installed from
-        # the correct torch-version-specific find-links page to avoid ABI mismatches.
-        inference_reqs = submodule_path / "requirements.inference.txt"
-        if inference_reqs.exists():
-            logger.info(f"Installing inference dependencies from {inference_reqs}...")
-            torch_ver = self._get_torch_version()
-            kaolin_find_links = f"https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-{torch_ver}_cu121.html"
-            env = os.environ.copy()
-            cuda_home = self._get_cuda_home()
-            if cuda_home:
-                env["CUDA_HOME"] = cuda_home
-                logger.info(f"Using CUDA_HOME={cuda_home}")
-            # Install kaolin first from the correct find-links to avoid ABI mismatch
-            # Use --no-deps --no-index so pip only grabs the wheel from find-links
-            # without trying to resolve kaolin's deps from that same (limited) index.
-            logger.info(f"Installing kaolin from {kaolin_find_links}...")
-            subprocess.check_call(
-                [
-                    str(venv_python), "-m", "pip", "install",
-                    "--no-build-isolation",
-                    "--no-index",
-                    "--no-deps",
-                    "-f", kaolin_find_links,
-                    "kaolin==0.17.0",
-                ],
-                env=env,
-            )
-            # Then install remaining deps from requirements file
-            subprocess.check_call(
-                [
-                    str(venv_python), "-m", "pip", "install",
-                    "--no-build-isolation",
-                    "-r", str(inference_reqs),
-                ],
-                env=env,
-            )
-            logger.info("Inference dependencies installed successfully")
-        else:
-            logger.warning(f"No requirements.inference.txt found at {inference_reqs}")
+        torch_ver = self._get_torch_version()
+        cuda_home = self._get_cuda_home()
+        kaolin_find_links = f"https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-{torch_ver}_cu121.html"
+
+        env = os.environ.copy()
+        env["CUDA_HOME"] = cuda_home
+        env["FORCE_CUDA"] = "1"
+        env["TORCH_CUDA_ARCH_LIST"] = "8.6"
+        logger.info(f"Using CUDA_HOME={cuda_home}")
+
+        def _pip(args: list[str], **kwargs: object) -> None:
+            subprocess.check_call([str(venv_python), "-m", "pip", "install", *args], env=env, **kwargs)
+
+        # --- Step 1: kaolin from NVIDIA S3 (wheel only, no deps) ---
+        logger.info(f"Installing kaolin from {kaolin_find_links}...")
+        _pip(["--no-index", "--no-deps", "-f", kaolin_find_links, "kaolin==0.17.0"])
+
+        # --- Step 2: Pure-Python / wheel runtime deps ---
+        # These are packages the sam3d_objects code imports at runtime that aren't
+        # pulled in by requirements.inference.txt.
+        logger.info("Installing runtime dependencies...")
+        _pip([
+            "numpy<2.0",
+            "loguru",
+            "astor",
+            "opencv-python",
+            "easydict",
+            "python-igraph",
+            "imageio",
+            "lightning",
+            "omegaconf",
+            "open3d",
+            "optree",
+            "plotly",
+            "plyfile",
+            "pymeshfix",
+            "pyvista",
+            "safetensors",
+            "seaborn==0.13.2",
+            "timm",
+            "trimesh",
+            "xatlas",
+            "spconv-cu121==2.3.8",
+            # kaolin dependencies (installed with --no-deps so we must provide these)
+            "ipycanvas",
+            "ipyevents",
+            "jupyter-client<8",
+            "pygltflib",
+            "tornado",
+            "usd-core",
+            "warp-lang",
+            # gradio (used by inference.py)
+            "gradio==5.49.0",
+        ])
+        # Pin numpy back down (open3d/opencv may have upgraded it)
+        _pip(["numpy<2.0"])
+
+        # --- Step 3: Packages from git that need specific commits ---
+        logger.info("Installing MoGe...")
+        _pip([
+            "--no-deps", "--no-build-isolation",
+            "MoGe @ git+https://github.com/microsoft/MoGe.git@a8c37341bc0325ca99b9d57981cc3bb2bd3e255b",
+        ])
+
+        logger.info("Installing utils3d (MoGe-pinned commit)...")
+        _pip([
+            "--force-reinstall", "--no-deps",
+            "utils3d @ git+https://github.com/EasternJournalist/utils3d.git@3913c65d81e05e47b9f367250cf8c0f7462a0900",
+        ])
+
+        # --- Step 4: CUDA extensions built from source ---
+        logger.info("Building gsplat from source...")
+        _pip([
+            "--no-build-isolation", "--no-deps",
+            "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@2323de5905d5e90e035f792fe65bad0fedd413e7",
+        ])
+
+        logger.info("Building pytorch3d from source...")
+        _pip([
+            "--no-build-isolation", "--no-deps",
+            "git+https://github.com/facebookresearch/pytorch3d.git",
+        ])
+
+        logger.info("Inference dependencies installed successfully")
 
     def _install_package(self, submodule_path: Path) -> None:
         if str(submodule_path) not in sys.path:
