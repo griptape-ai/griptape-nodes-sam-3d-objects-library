@@ -17,9 +17,13 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         submodule_path = self._init_submodule()
         if not self._is_installed(submodule_path):
             self._install_from_requirements(submodule_path)
-            self._install_package(submodule_path)
             self._apply_patches(submodule_path)
             self._write_installed_sentinel(submodule_path)
+        else:
+            logger.info("Dependencies already installed, skipping install steps")
+        self._ensure_checkpoints(submodule_path)
+        # sys.path injection must happen every engine start
+        self._install_package(submodule_path)
 
     def after_library_nodes_loaded(self, library_data: LibrarySchema, library: Library) -> None:
         logger.info(f"Finished loading '{library_data.name}' library")
@@ -102,22 +106,23 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         self._get_installed_sentinel().write_text(self._get_submodule_commit(submodule_path))
 
     def _is_installed(self, submodule_path: Path) -> bool:
-        """Return True only if the package is importable AND was installed from the currently-pinned commit.
+        """Return True only if deps are installed AND match the currently-pinned submodule commit.
 
         This ensures that when a new library version ships with a different submodule commit,
         the package is reinstalled rather than reusing a stale installation.
         """
-        venv_python = self._get_venv_python_path()
-        result = subprocess.run(
-            [str(venv_python), "-c", "import sam3d_objects"],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            return False
         sentinel = self._get_installed_sentinel()
         if not sentinel.exists():
             return False
-        return sentinel.read_text().strip() == self._get_submodule_commit(submodule_path)
+        if sentinel.read_text().strip() != self._get_submodule_commit(submodule_path):
+            return False
+        # Verify a key dependency is actually importable in the venv
+        venv_python = self._get_venv_python_path()
+        result = subprocess.run(
+            [str(venv_python), "-c", "import kaolin"],
+            capture_output=True,
+        )
+        return result.returncode == 0
 
     def _install_from_requirements(self, submodule_path: Path) -> None:
         """Install all inference dependencies required by sam-3d-objects.
@@ -192,6 +197,8 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
             "warp-lang",
             # gradio (used by inference.py)
             "gradio==5.49.0",
+            # huggingface_hub (used for checkpoint downloads)
+            "huggingface_hub",
         ])
         # Pin numpy back down (open3d/opencv may have upgraded it)
         _pip(["numpy<2.0"])
@@ -223,6 +230,61 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         ])
 
         logger.info("Inference dependencies installed successfully")
+
+    _HF_REPO_ID = "facebook/sam-3d-objects"
+    _CHECKPOINT_SENTINEL = "pipeline.yaml"
+
+    def _ensure_checkpoints(self, submodule_path: Path) -> None:
+        """Download model checkpoints from HuggingFace if not already present.
+
+        The gated repo facebook/sam-3d-objects contains ~12 GB of checkpoint files
+        under its ``checkpoints/`` directory.  This method uses ``snapshot_download``
+        (via the venv Python) to fetch them into ``checkpoints/hf/``.
+
+        Users must first:
+          1. Accept the license at https://huggingface.co/facebook/sam-3d-objects
+          2. Authenticate with ``huggingface-cli login``
+        """
+        checkpoints_dir = submodule_path / "checkpoints" / "hf"
+        if (checkpoints_dir / self._CHECKPOINT_SENTINEL).exists():
+            logger.info("Checkpoints already present, skipping download")
+            return
+
+        logger.info(f"Downloading checkpoints from HuggingFace repo '{self._HF_REPO_ID}'...")
+        venv_python = self._get_venv_python_path()
+        download_script = (
+            "import os, shutil\n"
+            "from huggingface_hub import snapshot_download\n"
+            f"tmp = snapshot_download("
+            f"repo_id='{self._HF_REPO_ID}', "
+            f"repo_type='model', "
+            f"allow_patterns='checkpoints/*')\n"
+            f"src = os.path.join(tmp, 'checkpoints')\n"
+            f"dst = {str(checkpoints_dir)!r}\n"
+            "os.makedirs(dst, exist_ok=True)\n"
+            "for f in os.listdir(src):\n"
+            "    shutil.copy2(os.path.join(src, f), os.path.join(dst, f))\n"
+            "print('done')\n"
+        )
+        result = subprocess.run(
+            [str(venv_python), "-c", download_script],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to download checkpoints from HuggingFace.\n\n"
+                f"stderr:\n{result.stderr.strip()}\n\n"
+                f"This is a gated model. Please ensure you have:\n"
+                f"  1. Accepted the license at https://huggingface.co/{self._HF_REPO_ID}\n"
+                f"  2. Authenticated with: huggingface-cli login\n"
+            )
+        if not (checkpoints_dir / self._CHECKPOINT_SENTINEL).exists():
+            raise RuntimeError(
+                f"Checkpoint download appeared to succeed but {self._CHECKPOINT_SENTINEL} "
+                f"is missing from {checkpoints_dir}. Check the HuggingFace repo structure."
+            )
+        logger.info(f"Checkpoints downloaded successfully to {checkpoints_dir}")
 
     def _install_package(self, submodule_path: Path) -> None:
         if str(submodule_path) not in sys.path:
