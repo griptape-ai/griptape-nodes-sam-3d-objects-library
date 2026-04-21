@@ -7,9 +7,11 @@ import tempfile
 from typing import Any
 
 import numpy as np
+import huggingface_hub
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact, VideoUrlArtifact
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import AsyncResult, SuccessFailureNode
+from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.exe_types.param_components.seed_parameter import SeedParameter
 from griptape_nodes.exe_types.param_types.parameter_video import ParameterVideo
@@ -33,6 +35,12 @@ class ReconstructMultiObject3D(SuccessFailureNode):
         # SeedParameter must be created first because after_value_set can be called
         # during parameter initialization, before _seed_param would otherwise exist.
         self._seed_param = SeedParameter(self)
+
+        self._hf_repo_param = HuggingFaceRepoParameter(
+            self,
+            repo_ids=["facebook/sam-3d-objects"],
+        )
+        self._hf_repo_param.add_input_parameters()
 
         self.add_parameter(
             Parameter(
@@ -68,24 +76,6 @@ class ReconstructMultiObject3D(SuccessFailureNode):
 
         self.add_parameter(
             Parameter(
-                name="config_path",
-                allowed_modes={ParameterMode.INPUT, ParameterMode.PROPERTY},
-                type="str",
-                default_value="sam-3d-objects/checkpoints/hf/pipeline.yaml",
-                tooltip="Path to the Hydra pipeline.yaml config file (relative to the sam-3d-objects repo root or absolute)",
-            )
-        )
-        self.add_parameter(
-            Parameter(
-                name="output_path",
-                allowed_modes={ParameterMode.INPUT, ParameterMode.PROPERTY},
-                type="str",
-                default_value="/tmp/sam3d_multi_output",  # noqa: S108
-                tooltip="Base file path for the output (extension added automatically based on output_format)",
-            )
-        )
-        self.add_parameter(
-            Parameter(
                 name="output_file_path",
                 allowed_modes={ParameterMode.OUTPUT},
                 output_type="str",
@@ -106,9 +96,16 @@ class ReconstructMultiObject3D(SuccessFailureNode):
         self._output_file = ProjectFileParameter(
             node=self,
             name="output_file",
-            default_filename="sam3d_multi_preview.gif",
+            default_filename="sam3d_multi_output.ply",
         )
         self._output_file.add_parameter()
+
+        self._preview_file = ProjectFileParameter(
+            node=self,
+            name="preview_file",
+            default_filename="sam3d_multi_preview.gif",
+        )
+        self._preview_file.add_parameter()
 
         # Status parameters MUST be last
         self._create_status_parameters()
@@ -120,6 +117,10 @@ class ReconstructMultiObject3D(SuccessFailureNode):
     def validate_before_node_run(self) -> list[Exception] | None:
         """Validate that required inputs are present."""
         errors: list[Exception] = []
+
+        hf_errors = self._hf_repo_param.validate_before_node_run()
+        if hf_errors:
+            errors.extend(hf_errors)
 
         image = self.parameter_values.get("image")
         if not isinstance(image, (ImageArtifact, ImageUrlArtifact)):
@@ -135,14 +136,6 @@ class ReconstructMultiObject3D(SuccessFailureNode):
                     errors.append(ValueError("masks must be a non-empty JSON array of image URLs"))
             except (json.JSONDecodeError, TypeError) as e:
                 errors.append(ValueError(f"masks must be a valid JSON array: {e}"))
-
-        config_path = self.parameter_values.get("config_path")
-        if not config_path:
-            errors.append(ValueError("config_path is required"))
-
-        output_path = self.parameter_values.get("output_path")
-        if not output_path:
-            errors.append(ValueError("output_path is required"))
 
         return errors if errors else None
 
@@ -196,21 +189,26 @@ class ReconstructMultiObject3D(SuccessFailureNode):
         """Run SAM 3D Objects multi-object inference via subprocess."""
         image_artifact = self.parameter_values.get("image")
         masks_str = self.parameter_values.get("masks")
-        config_path = self.parameter_values.get("config_path")
-        output_path_base = self.parameter_values.get("output_path")
         output_format = self.parameter_values.get("output_format", "ply")
 
         if not isinstance(image_artifact, (ImageArtifact, ImageUrlArtifact)):
             raise ValueError("image is required")
         if not isinstance(masks_str, str):
             raise ValueError("masks is required")
-        if not isinstance(config_path, str):
-            raise ValueError("config_path is required")
-        if not isinstance(output_path_base, str):
-            raise ValueError("output_path is required")
 
-        # Ensure the output path has the correct extension
-        output_path = output_path_base.rsplit(".", 1)[0] + f".{output_format}"
+        # Resolve config path from HuggingFace cache
+        repo_id, revision = self._hf_repo_param.get_repo_revision()
+        config_path = huggingface_hub.hf_hub_download(
+            repo_id=repo_id,
+            revision=revision,
+            filename="checkpoints/pipeline.yaml",
+            local_files_only=True,
+        )
+
+        # Use a temp file for subprocess output, then copy to project outputs
+        tmp_output = tempfile.NamedTemporaryFile(suffix=f".{output_format}", delete=False)
+        tmp_output.close()
+        output_path = tmp_output.name
 
         mask_urls: list[str] = json.loads(masks_str)
 
@@ -251,22 +249,37 @@ class ReconstructMultiObject3D(SuccessFailureNode):
             if result.get("status") != "ok":
                 raise RuntimeError(f"Inference error: {result.get('message', 'unknown error')}")
 
-            logger.info(f"Saved 3D output ({output_format}) to {output_path}")
-            self.parameter_output_values["output_file_path"] = result["output_path"]
+            # Copy the output 3D file to the project outputs folder
+            with open(result["output_path"], "rb") as f:
+                output_bytes = f.read()
+            # Update output filename to match the selected format
+            current_name = self.get_parameter_value("output_file") or "sam3d_multi_output.ply"
+            base, _ = os.path.splitext(current_name)
+            self.set_parameter_value("output_file", f"{base}.{output_format}")
+            dest = self._output_file.build_file()
+            saved = dest.write_bytes(output_bytes)
+            logger.info(f"Saved 3D output ({output_format}) to {saved.location}")
+            self.parameter_output_values["output_file_path"] = saved.location
 
             # Save the GIF preview and set the video output
             gif_path = result.get("gif_path")
             if gif_path and os.path.isfile(gif_path):
                 with open(gif_path, "rb") as f:
                     gif_bytes = f.read()
-                dest = self._output_file.build_file()
-                saved = dest.write_bytes(gif_bytes)
-                self.parameter_output_values["video_preview"] = VideoUrlArtifact(value=saved.location, name=saved.name)
-                logger.info(f"Saved turntable preview to {saved.location}")
+                preview_dest = self._preview_file.build_file()
+                preview_saved = preview_dest.write_bytes(gif_bytes)
+                self.parameter_output_values["video_preview"] = VideoUrlArtifact(value=preview_saved.location, name=preview_saved.name)
+                logger.info(f"Saved turntable preview to {preview_saved.location}")
         finally:
             # Clean up temp files
-            for path in [image_path, *mask_paths]:
+            for path in [image_path, *mask_paths, output_path]:
                 try:
                     os.unlink(path)
                 except OSError:
                     pass
+            # Also clean up the temp GIF if it was created
+            gif_tmp = os.path.splitext(output_path)[0] + ".gif"
+            try:
+                os.unlink(gif_tmp)
+            except OSError:
+                pass

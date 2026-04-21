@@ -166,7 +166,7 @@ def _run_multi(request: dict) -> dict:
     import imageio  # noqa: PLC0415
 
     # Save as GIF next to the output file
-    gif_path = output_path.rsplit(".", 1)[0] + ".gif"
+    gif_path = os.path.splitext(output_path)[0] + ".gif"
     imageio.mimsave(
         gif_path,
         video_frames,

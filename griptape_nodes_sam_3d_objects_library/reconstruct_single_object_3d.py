@@ -7,9 +7,12 @@ import tempfile
 from typing import Any
 
 import numpy as np
+import huggingface_hub
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import AsyncResult, SuccessFailureNode
+from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
+from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.exe_types.param_components.seed_parameter import SeedParameter
 from griptape_nodes.files.file import File
 from PIL import Image
@@ -30,6 +33,12 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         # SeedParameter must be created first because after_value_set can be called
         # during parameter initialization, before _seed_param would otherwise exist.
         self._seed_param = SeedParameter(self)
+
+        self._hf_repo_param = HuggingFaceRepoParameter(
+            self,
+            repo_ids=["facebook/sam-3d-objects"],
+        )
+        self._hf_repo_param.add_input_parameters()
 
         self.add_parameter(
             Parameter(
@@ -56,24 +65,6 @@ class ReconstructSingleObject3D(SuccessFailureNode):
 
         self.add_parameter(
             Parameter(
-                name="config_path",
-                allowed_modes={ParameterMode.INPUT, ParameterMode.PROPERTY},
-                type="str",
-                default_value="checkpoints/hf/pipeline.yaml",
-                tooltip="Path to the Hydra pipeline.yaml config file (relative to the sam-3d-objects repo root or absolute)",
-            )
-        )
-        self.add_parameter(
-            Parameter(
-                name="output_ply_path",
-                allowed_modes={ParameterMode.INPUT, ParameterMode.PROPERTY},
-                type="str",
-                default_value="/tmp/sam3d_output.ply",  # noqa: S108
-                tooltip="File path where the output Gaussian splat PLY will be saved",
-            )
-        )
-        self.add_parameter(
-            Parameter(
                 name="ply_path",
                 allowed_modes={ParameterMode.OUTPUT},
                 output_type="str",
@@ -81,6 +72,13 @@ class ReconstructSingleObject3D(SuccessFailureNode):
                 tooltip="Absolute path to the saved PLY file containing the 3D Gaussian splat",
             )
         )
+
+        self._output_file = ProjectFileParameter(
+            node=self,
+            name="output_file",
+            default_filename="sam3d_output.ply",
+        )
+        self._output_file.add_parameter()
 
         # Status parameters MUST be last
         self._create_status_parameters()
@@ -93,6 +91,10 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         """Validate that required inputs are present."""
         errors: list[Exception] = []
 
+        hf_errors = self._hf_repo_param.validate_before_node_run()
+        if hf_errors:
+            errors.extend(hf_errors)
+
         image = self.parameter_values.get("image")
         if not isinstance(image, (ImageArtifact, ImageUrlArtifact)):
             errors.append(ValueError("image is required and must be an ImageUrlArtifact or ImageArtifact"))
@@ -100,14 +102,6 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         mask = self.parameter_values.get("mask")
         if not isinstance(mask, (ImageArtifact, ImageUrlArtifact)):
             errors.append(ValueError("mask is required and must be an ImageUrlArtifact or ImageArtifact"))
-
-        config_path = self.parameter_values.get("config_path")
-        if not config_path:
-            errors.append(ValueError("config_path is required"))
-
-        output_ply_path = self.parameter_values.get("output_ply_path")
-        if not output_ply_path:
-            errors.append(ValueError("output_ply_path is required"))
 
         return errors if errors else None
 
@@ -150,17 +144,20 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         """Run SAM 3D Objects single-object inference via subprocess."""
         image_artifact = self.parameter_values.get("image")
         mask_artifact = self.parameter_values.get("mask")
-        config_path = self.parameter_values.get("config_path")
-        output_ply_path = self.parameter_values.get("output_ply_path")
 
         if not isinstance(image_artifact, (ImageArtifact, ImageUrlArtifact)):
             raise ValueError("image is required")
         if not isinstance(mask_artifact, (ImageArtifact, ImageUrlArtifact)):
             raise ValueError("mask is required")
-        if not isinstance(config_path, str):
-            raise ValueError("config_path is required")
-        if not isinstance(output_ply_path, str):
-            raise ValueError("output_ply_path is required")
+
+        # Resolve config path from HuggingFace cache
+        repo_id, revision = self._hf_repo_param.get_repo_revision()
+        config_path = huggingface_hub.hf_hub_download(
+            repo_id=repo_id,
+            revision=revision,
+            filename="checkpoints/pipeline.yaml",
+            local_files_only=True,
+        )
 
         self._seed_param.preprocess()
         seed = self._seed_param.get_seed()
@@ -169,13 +166,17 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         image_path = self._save_artifact_to_temp(image_artifact, suffix=".png")
         mask_path = self._save_artifact_to_temp(mask_artifact, suffix=".png")
 
+        # Use a temp file for subprocess output, then copy to project outputs
+        tmp_output = tempfile.NamedTemporaryFile(suffix=".ply", delete=False)
+        tmp_output.close()
+
         try:
             request = {
                 "action": "single",
                 "image_path": image_path,
                 "mask_paths": [mask_path],
                 "config_path": config_path,
-                "output_ply_path": output_ply_path,
+                "output_ply_path": tmp_output.name,
                 "seed": seed,
                 "submodule_root": self._get_submodule_root(),
             }
@@ -198,11 +199,16 @@ class ReconstructSingleObject3D(SuccessFailureNode):
             if result.get("status") != "ok":
                 raise RuntimeError(f"Inference error: {result.get('message', 'unknown error')}")
 
-            logger.info(f"Saved Gaussian splat PLY to {output_ply_path}")
-            self.parameter_output_values["ply_path"] = result["ply_path"]
+            # Copy the output PLY to the project outputs folder
+            with open(tmp_output.name, "rb") as f:
+                ply_bytes = f.read()
+            dest = self._output_file.build_file()
+            saved = dest.write_bytes(ply_bytes)
+            logger.info(f"Saved Gaussian splat PLY to {saved.location}")
+            self.parameter_output_values["ply_path"] = saved.location
         finally:
             # Clean up temp files
-            for path in (image_path, mask_path):
+            for path in (image_path, mask_path, tmp_output.name):
                 try:
                     os.unlink(path)
                 except OSError:
