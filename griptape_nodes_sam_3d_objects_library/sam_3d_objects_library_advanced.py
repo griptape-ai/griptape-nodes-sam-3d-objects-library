@@ -172,6 +172,7 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
             "easydict",
             "python-igraph",
             "imageio",
+            "imageio-ffmpeg",
             "lightning",
             "omegaconf",
             "open3d",

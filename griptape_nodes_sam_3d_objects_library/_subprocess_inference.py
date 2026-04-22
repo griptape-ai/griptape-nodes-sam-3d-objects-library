@@ -42,6 +42,11 @@ def _run_single(request: dict) -> dict:
     from PIL import Image
 
     inference = _get_inference(request["config_path"])
+    from inference import (
+        make_scene,
+        ready_gaussian_for_video_rendering,
+        render_video,
+    )
 
     image = np.array(Image.open(request["image_path"]).convert("RGB"), dtype=np.uint8)
     mask = np.array(Image.open(request["mask_paths"][0]))
@@ -52,14 +57,39 @@ def _run_single(request: dict) -> dict:
     output = inference(image, mask, seed=request["seed"])
     output_path = request["output_path"]
     output_format = request.get("output_format", "ply")
-    if output_format == "obj":
+    if output_format in ("obj", "glb"):
         mesh = make_scene_untextured_separate_meshes(output)
         if mesh is None:
             return {"status": "error", "message": "No mesh could be generated"}
         mesh.export(output_path)
     else:
         output["gaussian"][0].save_ply(output_path)
-    return {"status": "ok", "output_path": output_path}
+
+    # Render turntable video preview
+    scene_gs = make_scene(output)
+    scene_gs_video = ready_gaussian_for_video_rendering(scene_gs)
+    video_frames = render_video(
+        scene_gs_video,
+        r=1,
+        fov=60,
+        resolution=512,
+        num_frames=60,
+    )["color"]
+
+    import imageio  # noqa: PLC0415
+
+    video_path = os.path.splitext(output_path)[0] + ".mp4"
+    writer = imageio.get_writer(
+        video_path,
+        fps=30,
+        codec="libx264",
+        output_params=["-movflags", "+faststart", "-pix_fmt", "yuv420p"],
+    )
+    for frame in video_frames:
+        writer.append_data(frame)
+    writer.close()
+
+    return {"status": "ok", "output_path": output_path, "video_path": video_path}
 
 
 import torch
@@ -143,7 +173,7 @@ def _run_multi(request: dict) -> dict:
 
     output_path = request["output_path"]
     output_format = request.get("output_format", "ply")
-    if output_format == "obj":
+    if output_format in ("obj", "glb"):
         mesh = make_scene_untextured_separate_meshes(*outputs)
         if mesh is None:
             return {"status": "error", "message": "No mesh could be generated"}
@@ -165,16 +195,18 @@ def _run_multi(request: dict) -> dict:
     # Convert frames to numpy uint8 arrays for imageio
     import imageio  # noqa: PLC0415
 
-    # Save as GIF next to the output file
-    gif_path = os.path.splitext(output_path)[0] + ".gif"
-    imageio.mimsave(
-        gif_path,
-        video_frames,
-        format="GIF",
-        duration=1000 / 30,
-        loop=0,
+    # Save as MP4 next to the output file
+    video_path = os.path.splitext(output_path)[0] + ".mp4"
+    writer = imageio.get_writer(
+        video_path,
+        fps=30,
+        codec="libx264",
+        output_params=["-movflags", "+faststart", "-pix_fmt", "yuv420p"],
     )
-    return {"status": "ok", "output_path": output_path, "gif_path": gif_path}
+    for frame in video_frames:
+        writer.append_data(frame)
+    writer.close()
+    return {"status": "ok", "output_path": output_path, "video_path": video_path}
 
 
 def main() -> None:

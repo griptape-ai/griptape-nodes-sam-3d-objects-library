@@ -69,9 +69,9 @@ class ReconstructMultiObject3D(SuccessFailureNode):
             allowed_modes={ParameterMode.INPUT, ParameterMode.PROPERTY},
             type="str",
             default_value="ply",
-            tooltip="Output format: PLY (Gaussian splat) or OBJ (mesh)",
+            tooltip="Output format: PLY (Gaussian splat), OBJ (mesh), or GLB (mesh)",
         )
-        output_format_param.add_trait(Options(choices=["ply", "obj"]))
+        output_format_param.add_trait(Options(choices=["ply", "obj", "glb"]))
         self.add_parameter(output_format_param)
 
         self.add_parameter(
@@ -99,13 +99,6 @@ class ReconstructMultiObject3D(SuccessFailureNode):
             default_filename="sam3d_multi_output.ply",
         )
         self._output_file.add_parameter()
-
-        self._preview_file = ProjectFileParameter(
-            node=self,
-            name="preview_file",
-            default_filename="sam3d_multi_preview.gif",
-        )
-        self._preview_file.add_parameter()
 
         # Status parameters MUST be last
         self._create_status_parameters()
@@ -261,13 +254,14 @@ class ReconstructMultiObject3D(SuccessFailureNode):
             logger.info(f"Saved 3D output ({output_format}) to {saved.location}")
             self.parameter_output_values["output_file_path"] = saved.location
 
-            # Save the GIF preview and set the video output
-            gif_path = result.get("gif_path")
-            if gif_path and os.path.isfile(gif_path):
-                with open(gif_path, "rb") as f:
-                    gif_bytes = f.read()
-                preview_dest = self._preview_file.build_file()
-                preview_saved = preview_dest.write_bytes(gif_bytes)
+            # Save the video preview and set the video output
+            video_path = result.get("video_path")
+            if video_path and os.path.isfile(video_path):
+                with open(video_path, "rb") as f:
+                    video_bytes = f.read()
+                from griptape_nodes.files.project_file import ProjectFileDestination
+                preview_dest = ProjectFileDestination.from_situation("sam3d_multi_preview.mp4", "save_node_output", node_name=self.name)
+                preview_saved = preview_dest.write_bytes(video_bytes)
                 self.parameter_output_values["video_preview"] = VideoUrlArtifact(value=preview_saved.location, name=preview_saved.name)
                 logger.info(f"Saved turntable preview to {preview_saved.location}")
         finally:
@@ -277,9 +271,9 @@ class ReconstructMultiObject3D(SuccessFailureNode):
                     os.unlink(path)
                 except OSError:
                     pass
-            # Also clean up the temp GIF if it was created
-            gif_tmp = os.path.splitext(output_path)[0] + ".gif"
+            # Also clean up the temp video if it was created
+            video_tmp = os.path.splitext(output_path)[0] + ".mp4"
             try:
-                os.unlink(gif_tmp)
+                os.unlink(video_tmp)
             except OSError:
                 pass

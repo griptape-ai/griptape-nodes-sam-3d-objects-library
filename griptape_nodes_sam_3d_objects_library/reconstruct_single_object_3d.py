@@ -8,13 +8,15 @@ from typing import Any
 
 import numpy as np
 import huggingface_hub
-from griptape.artifacts import ImageArtifact, ImageUrlArtifact
+from griptape.artifacts import ImageArtifact, ImageUrlArtifact, VideoUrlArtifact
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import AsyncResult, SuccessFailureNode
 from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.exe_types.param_components.seed_parameter import SeedParameter
+from griptape_nodes.exe_types.param_types.parameter_video import ParameterVideo
 from griptape_nodes.files.file import File
+from griptape_nodes.traits.options import Options
 from PIL import Image
 
 logger = logging.getLogger("sam_3d_objects_library")
@@ -63,13 +65,32 @@ class ReconstructSingleObject3D(SuccessFailureNode):
 
         self._seed_param.add_input_parameters()
 
+        output_format_param = Parameter(
+            name="output_format",
+            allowed_modes={ParameterMode.INPUT, ParameterMode.PROPERTY},
+            type="str",
+            default_value="ply",
+            tooltip="Output format: PLY (Gaussian splat), OBJ (mesh), or GLB (mesh)",
+        )
+        output_format_param.add_trait(Options(choices=["ply", "obj", "glb"]))
+        self.add_parameter(output_format_param)
+
         self.add_parameter(
             Parameter(
-                name="ply_path",
+                name="output_file_path",
                 allowed_modes={ParameterMode.OUTPUT},
                 output_type="str",
                 default_value=None,
-                tooltip="Absolute path to the saved PLY file containing the 3D Gaussian splat",
+                tooltip="Absolute path to the saved 3D file (PLY, OBJ, or GLB)",
+            )
+        )
+        self.add_parameter(
+            ParameterVideo(
+                name="video_preview",
+                tooltip="Turntable preview of the reconstructed object",
+                allowed_modes={ParameterMode.OUTPUT, ParameterMode.PROPERTY},
+                settable=False,
+                ui_options={"pulse_on_run": True, "expander": True},
             )
         )
 
@@ -144,6 +165,7 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         """Run SAM 3D Objects single-object inference via subprocess."""
         image_artifact = self.parameter_values.get("image")
         mask_artifact = self.parameter_values.get("mask")
+        output_format = self.parameter_values.get("output_format", "ply")
 
         if not isinstance(image_artifact, (ImageArtifact, ImageUrlArtifact)):
             raise ValueError("image is required")
@@ -159,6 +181,11 @@ class ReconstructSingleObject3D(SuccessFailureNode):
             local_files_only=True,
         )
 
+        # Use a temp file for subprocess output, then copy to project outputs
+        tmp_output = tempfile.NamedTemporaryFile(suffix=f".{output_format}", delete=False)
+        tmp_output.close()
+        output_path = tmp_output.name
+
         self._seed_param.preprocess()
         seed = self._seed_param.get_seed()
 
@@ -166,17 +193,14 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         image_path = self._save_artifact_to_temp(image_artifact, suffix=".png")
         mask_path = self._save_artifact_to_temp(mask_artifact, suffix=".png")
 
-        # Use a temp file for subprocess output, then copy to project outputs
-        tmp_output = tempfile.NamedTemporaryFile(suffix=".ply", delete=False)
-        tmp_output.close()
-
         try:
             request = {
                 "action": "single",
                 "image_path": image_path,
                 "mask_paths": [mask_path],
                 "config_path": config_path,
-                "output_ply_path": tmp_output.name,
+                "output_path": output_path,
+                "output_format": output_format,
                 "seed": seed,
                 "submodule_root": self._get_submodule_root(),
             }
@@ -199,17 +223,38 @@ class ReconstructSingleObject3D(SuccessFailureNode):
             if result.get("status") != "ok":
                 raise RuntimeError(f"Inference error: {result.get('message', 'unknown error')}")
 
-            # Copy the output PLY to the project outputs folder
-            with open(tmp_output.name, "rb") as f:
-                ply_bytes = f.read()
+            # Copy the output 3D file to the project outputs folder
+            with open(result["output_path"], "rb") as f:
+                output_bytes = f.read()
+            # Update output filename to match the selected format
+            current_name = self.get_parameter_value("output_file") or "sam3d_output.ply"
+            base, _ = os.path.splitext(current_name)
+            self.set_parameter_value("output_file", f"{base}.{output_format}")
             dest = self._output_file.build_file()
-            saved = dest.write_bytes(ply_bytes)
-            logger.info(f"Saved Gaussian splat PLY to {saved.location}")
-            self.parameter_output_values["ply_path"] = saved.location
+            saved = dest.write_bytes(output_bytes)
+            logger.info(f"Saved 3D output ({output_format}) to {saved.location}")
+            self.parameter_output_values["output_file_path"] = saved.location
+
+            # Save the video preview and set the video output
+            video_path = result.get("video_path")
+            if video_path and os.path.isfile(video_path):
+                with open(video_path, "rb") as f:
+                    video_bytes = f.read()
+                from griptape_nodes.files.project_file import ProjectFileDestination
+                preview_dest = ProjectFileDestination.from_situation("sam3d_preview.mp4", "save_node_output", node_name=self.name)
+                preview_saved = preview_dest.write_bytes(video_bytes)
+                self.parameter_output_values["video_preview"] = VideoUrlArtifact(value=preview_saved.location, name=preview_saved.name)
+                logger.info(f"Saved turntable preview to {preview_saved.location}")
         finally:
             # Clean up temp files
-            for path in (image_path, mask_path, tmp_output.name):
+            for path in [image_path, mask_path, output_path]:
                 try:
                     os.unlink(path)
                 except OSError:
                     pass
+            # Also clean up the temp video if it was created
+            video_tmp = os.path.splitext(output_path)[0] + ".mp4"
+            try:
+                os.unlink(video_tmp)
+            except OSError:
+                pass

@@ -23,6 +23,10 @@
             "required": {
                 "compute": [["cuda"], "has_any"]
             }
+        },
+        "submodule_info": {
+            "url": "https://github.com/facebookresearch/sam-3d-objects.git",
+            "commit": "81a82373a3a7f4cbb00bd5b32aaf6b4d0f659ddd"
         }
     },
     "categories": [
