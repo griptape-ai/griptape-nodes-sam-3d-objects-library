@@ -96,6 +96,7 @@ def _run_single(request: dict) -> dict:
 
     return {"status": "ok", "output_path": output_path, "video_path": video_path}
 
+
 # From sam3d github: https://github.com/facebookresearch/sam-3d-objects/blob/main/sam3d_objects/data/dataset/tdfy/transforms_3d.py
 def compose_transform(scale: torch.Tensor, rotation: torch.Tensor, translation: torch.Tensor) -> Transform3d:
     """
@@ -106,6 +107,7 @@ def compose_transform(scale: torch.Tensor, rotation: torch.Tensor, translation: 
     """
     tfm = Transform3d(dtype=scale.dtype, device=scale.device)
     return tfm.scale(scale).rotate(rotation).translate(translation)
+
 
 # From sam3d github issues: https://github.com/facebookresearch/sam-3d-objects/issues/56#issuecomment-3614031150
 def make_scene_untextured_separate_meshes(*outputs, in_place=False):
