@@ -6,7 +6,6 @@ import sys
 import tempfile
 from typing import Any
 
-import numpy as np
 import huggingface_hub
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact, VideoUrlArtifact
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode

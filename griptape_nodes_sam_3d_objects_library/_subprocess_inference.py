@@ -93,7 +93,7 @@ def _run_single(request: dict) -> dict:
 
 
 import torch
-from pytorch3d.transforms import quaternion_to_matrix, Transform3d
+from pytorch3d.transforms import Transform3d, quaternion_to_matrix
 
 
 # From sam3d github: https://github.com/facebookresearch/sam-3d-objects/blob/main/sam3d_objects/data/dataset/tdfy/transforms_3d.py
@@ -109,6 +109,7 @@ def compose_transform(scale: torch.Tensor, rotation: torch.Tensor, translation: 
 
 
 from copy import deepcopy
+
 import numpy as np
 
 
