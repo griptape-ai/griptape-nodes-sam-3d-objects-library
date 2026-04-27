@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -36,13 +37,37 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
             return root / ".venv" / "Scripts" / "python.exe"
         return root / ".venv" / "bin" / "python"
 
-    def _update_submodules_recursive(self, repo_path: Path) -> None:
-        repo = pygit2.Repository(str(repo_path))
-        repo.submodules.update(init=True)
-        for sub in repo.submodules:
-            sub_path = repo_path / sub.path
-            if sub_path.exists() and (sub_path / ".git").exists():
-                self._update_submodules_recursive(sub_path)
+    def _init_submodules_from_gitmodules(self, gitmodules_path: Path) -> None:
+        """Run git submodule update --init --recursive from the repo root."""
+        repo_root = gitmodules_path.parent
+        logger.info(f"Running git submodule update --init --recursive from {repo_root}")
+        subprocess.run(
+            ["git", "-C", str(repo_root), "submodule", "update", "--init", "--recursive"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _clone_submodule_from_library_json(self, submodule_dir: Path) -> None:
+        """Clone submodule directly using metadata in griptape-nodes-library.json."""
+        json_path = self._get_library_root() / "griptape-nodes-library.json"
+        with json_path.open(encoding="utf-8") as f:
+            data = json.load(f)
+
+        submodule_info = data["metadata"]["submodule_info"]
+        url = submodule_info["url"]
+        commit = submodule_info.get("commit")
+
+        logger.info(f"Cloning SAM 3D Objects submodule from {url} (commit: {commit})")
+        submodule_dir.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", url, str(submodule_dir)], check=True, capture_output=True, text=True)
+        if commit:
+            subprocess.run(
+                ["git", "-C", str(submodule_dir), "checkout", commit],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
 
     def _init_submodule(self) -> Path:
         library_root = self._get_library_root()
@@ -50,7 +75,20 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         if submodule_dir.exists() and any(submodule_dir.iterdir()):
             logger.info("Submodule already initialized")
             return submodule_dir
-        self._update_submodules_recursive(library_root.parent)
+
+        # Walk up to find .gitmodules (same strategy as the SAM3 library).
+        current = library_root.resolve()
+        while current != current.parent:
+            gitmodules_path = current / ".gitmodules"
+            if gitmodules_path.exists():
+                logger.info(f"Found .gitmodules at {gitmodules_path}")
+                self._init_submodules_from_gitmodules(gitmodules_path)
+                break
+            current = current.parent
+        else:
+            logger.info("No .gitmodules found, falling back to griptape-nodes-library.json")
+            self._clone_submodule_from_library_json(submodule_dir)
+
         if not submodule_dir.exists() or not any(submodule_dir.iterdir()):
             raise RuntimeError(f"Submodule init failed: {submodule_dir}")
         logger.info("Submodule initialized successfully")
