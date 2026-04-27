@@ -106,7 +106,8 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         venv_python = self._get_venv_python_path()
         result = subprocess.run(
             [str(venv_python), "-c", "import torch; print(torch.__version__.split('+')[0])"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         return result.stdout.strip()
 
@@ -202,70 +203,84 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         # These are packages the sam3d_objects code imports at runtime that aren't
         # pulled in by requirements.inference.txt.
         logger.info("Installing runtime dependencies...")
-        _pip([
-            "numpy<2.0",
-            "loguru",
-            "astor",
-            "opencv-python",
-            "easydict",
-            "python-igraph",
-            "imageio",
-            "imageio-ffmpeg",
-            "lightning",
-            "omegaconf",
-            "open3d",
-            "optree",
-            "plotly",
-            "plyfile",
-            "pymeshfix",
-            "pyvista",
-            "safetensors",
-            "seaborn==0.13.2",
-            "timm",
-            "trimesh",
-            "xatlas",
-            "spconv-cu121==2.3.8",
-            # kaolin dependencies (installed with --no-deps so we must provide these)
-            "ipycanvas",
-            "ipyevents",
-            "jupyter-client<8",
-            "pygltflib",
-            "tornado",
-            "usd-core",
-            "warp-lang",
-            # gradio (used by inference.py)
-            "gradio==5.49.0",
-            # huggingface_hub (used for checkpoint downloads)
-            "huggingface_hub",
-        ])
+        _pip(
+            [
+                "numpy<2.0",
+                "loguru",
+                "astor",
+                "opencv-python",
+                "easydict",
+                "python-igraph",
+                "imageio",
+                "imageio-ffmpeg",
+                "lightning",
+                "omegaconf",
+                "open3d",
+                "optree",
+                "plotly",
+                "plyfile",
+                "pymeshfix",
+                "pyvista",
+                "safetensors",
+                "seaborn==0.13.2",
+                "timm",
+                "trimesh",
+                "xatlas",
+                "spconv-cu121==2.3.8",
+                # kaolin dependencies (installed with --no-deps so we must provide these)
+                "ipycanvas",
+                "ipyevents",
+                "jupyter-client<8",
+                "pygltflib",
+                "tornado",
+                "usd-core",
+                "warp-lang",
+                # gradio (used by inference.py)
+                "gradio==5.49.0",
+                # huggingface_hub (used for checkpoint downloads)
+                "huggingface_hub",
+            ]
+        )
         # Pin numpy back down (open3d/opencv may have upgraded it)
         _pip(["numpy<2.0"])
 
         # --- Step 3: Packages from git that need specific commits ---
         logger.info("Installing MoGe...")
-        _pip([
-            "--no-deps", "--no-build-isolation",
-            "MoGe @ git+https://github.com/microsoft/MoGe.git@a8c37341bc0325ca99b9d57981cc3bb2bd3e255b",
-        ])
+        _pip(
+            [
+                "--no-deps",
+                "--no-build-isolation",
+                "MoGe @ git+https://github.com/microsoft/MoGe.git@a8c37341bc0325ca99b9d57981cc3bb2bd3e255b",
+            ]
+        )
 
         logger.info("Installing utils3d (MoGe-pinned commit)...")
-        _pip([
-            "--force-reinstall", "--no-deps",
-            "utils3d @ git+https://github.com/EasternJournalist/utils3d.git@3913c65d81e05e47b9f367250cf8c0f7462a0900",
-        ])
+        _pip(
+            [
+                "--force-reinstall",
+                "--no-deps",
+                "utils3d @ git+https://github.com/EasternJournalist/utils3d.git@3913c65d81e05e47b9f367250cf8c0f7462a0900",
+            ]
+        )
 
         # --- Step 4: CUDA extensions built from source ---
         logger.info("Building gsplat from source...")
-        _pip([
-            "--no-build-isolation", "--no-deps",
-            "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@2323de5905d5e90e035f792fe65bad0fedd413e7",
-        ])
+        _pip(
+            [
+                "--no-build-isolation",
+                "--no-deps",
+                "gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@2323de5905d5e90e035f792fe65bad0fedd413e7",
+            ]
+        )
 
         logger.info("Building pytorch3d from source...")
-        _pip([
-            "--no-build-isolation", "--no-deps",
-            "git+https://github.com/facebookresearch/pytorch3d.git",
-        ])
+        _pip(
+            [
+                "--no-build-isolation",
+                "--no-deps",
+                "git+https://github.com/facebookresearch/pytorch3d.git",
+            ]
+        )
 
         logger.info("Inference dependencies installed successfully")
 

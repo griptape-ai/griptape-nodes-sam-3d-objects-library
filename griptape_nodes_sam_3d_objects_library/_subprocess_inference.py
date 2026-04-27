@@ -94,11 +94,10 @@ def _run_single(request: dict) -> dict:
 
 import torch
 from pytorch3d.transforms import quaternion_to_matrix, Transform3d
-# From sam3d github: https://github.com/facebookresearch/sam-3d-objects/blob/main/sam3d_objects/data/dataset/tdfy/transforms_3d.py
-def compose_transform(
 
-    scale: torch.Tensor, rotation: torch.Tensor, translation: torch.Tensor
-) -> Transform3d:
+
+# From sam3d github: https://github.com/facebookresearch/sam-3d-objects/blob/main/sam3d_objects/data/dataset/tdfy/transforms_3d.py
+def compose_transform(scale: torch.Tensor, rotation: torch.Tensor, translation: torch.Tensor) -> Transform3d:
     """
     Args:
         scale: (..., 3) tensor of scale factors
@@ -111,9 +110,12 @@ def compose_transform(
 
 from copy import deepcopy
 import numpy as np
+
+
 # From sam3d github issues: https://github.com/facebookresearch/sam-3d-objects/issues/56#issuecomment-3614031150
 def make_scene_untextured_separate_meshes(*outputs, in_place=False):
     import trimesh
+
     _R_ZUP_TO_YUP = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float32)
     _R_YUP_TO_ZUP = _R_ZUP_TO_YUP.T
 
@@ -147,15 +149,15 @@ def make_scene_untextured_separate_meshes(*outputs, in_place=False):
 
     # merge meshes into single mesh
     return trimesh.util.concatenate(all_meshes)
-    
-    
+
+
 def _run_multi(request: dict) -> dict:
     import numpy as np
     from PIL import Image
 
     inference = _get_inference(request["config_path"])
     from inference import (
-        make_scene, 
+        make_scene,
         ready_gaussian_for_video_rendering,
         render_video,
     )

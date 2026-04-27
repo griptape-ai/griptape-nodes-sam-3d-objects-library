@@ -241,9 +241,14 @@ class ReconstructSingleObject3D(SuccessFailureNode):
                 with open(video_path, "rb") as f:
                     video_bytes = f.read()
                 from griptape_nodes.files.project_file import ProjectFileDestination
-                preview_dest = ProjectFileDestination.from_situation("sam3d_preview.mp4", "save_node_output", node_name=self.name)
+
+                preview_dest = ProjectFileDestination.from_situation(
+                    "sam3d_preview.mp4", "save_node_output", node_name=self.name
+                )
                 preview_saved = preview_dest.write_bytes(video_bytes)
-                self.parameter_output_values["video_preview"] = VideoUrlArtifact(value=preview_saved.location, name=preview_saved.name)
+                self.parameter_output_values["video_preview"] = VideoUrlArtifact(
+                    value=preview_saved.location, name=preview_saved.name
+                )
                 logger.info(f"Saved turntable preview to {preview_saved.location}")
         finally:
             # Clean up temp files
