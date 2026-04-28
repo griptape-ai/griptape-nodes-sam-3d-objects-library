@@ -192,8 +192,8 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         env["TORCH_CUDA_ARCH_LIST"] = "8.6"
         logger.info(f"Using CUDA_HOME={cuda_home}")
 
-        def _pip(args: list[str], **kwargs: object) -> None:
-            subprocess.check_call([str(venv_python), "-m", "pip", "install", *args], env=env, **kwargs)
+        def _pip(args: list[str]) -> None:
+            subprocess.check_call([str(venv_python), "-m", "pip", "install", *args], env=env)
 
         # --- Step 1: kaolin from NVIDIA S3 (wheel only, no deps) ---
         logger.info(f"Installing kaolin from {kaolin_find_links}...")

@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from typing import Any
+from typing import Any, cast
 
 import huggingface_hub
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact, VideoUrlArtifact
@@ -241,7 +241,7 @@ class ReconstructSingleObject3D(SuccessFailureNode):
                     video_bytes = f.read()
                 from griptape_nodes.files.project_file import ProjectFileDestination
 
-                preview_dest = ProjectFileDestination.from_situation(
+                preview_dest = cast(Any, ProjectFileDestination).from_situation(
                     "sam3d_preview.mp4", "save_node_output", node_name=self.name
                 )
                 preview_saved = preview_dest.write_bytes(video_bytes)

@@ -14,6 +14,7 @@ import json
 import os
 import sys
 from copy import deepcopy
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -31,10 +32,10 @@ def _setup(submodule_root: str) -> None:
     os.environ["LIDRA_SKIP_INIT"] = "true"
 
 
-_inference_cache: dict[str, object] = {}
+_inference_cache: dict[str, Callable[..., Any]] = {}
 
 
-def _get_inference(config_path: str) -> object:
+def _get_inference(config_path: str) -> Callable[..., Any]:
     if config_path not in _inference_cache:
         from inference import Inference  # type: ignore[import-not-found]
 
