@@ -4,7 +4,7 @@ A [Griptape Nodes](https://www.griptapenodes.com/) library for 3D object reconst
 
 ## Overview
 
-This library wraps Meta's SAM 3D Objects foundation model, which reconstructs full 3D shape geometry, texture, and spatial layout from a single 2D image. Given an image and one or more binary object masks, the model produces Gaussian splat representations (PLY format) of the masked objects. Both single-object and multi-object (merged scene) reconstruction workflows are supported. The model handles real-world challenges including occlusion, clutter, and unusual object poses.
+This library wraps Meta's SAM 3D Objects foundation model, which reconstructs full 3D shape geometry, texture, and spatial layout from a single 2D image. Given an image and one or more binary object masks, the model produces 3D representations of the masked objects in PLY (Gaussian splat), OBJ (mesh), or GLB (mesh) format. Both single-object and multi-object (merged scene) reconstruction workflows are supported, with turntable video previews. The model handles real-world challenges including occlusion, clutter, and unusual object poses.
 
 ## Requirements
 
@@ -15,52 +15,48 @@ This library wraps Meta's SAM 3D Objects foundation model, which reconstructs fu
 
 ### Reconstruct Single Object 3D
 
-Reconstructs a 3D Gaussian splat of a single masked object from a 2D image. Takes an image and a binary mask indicating which object to reconstruct, then outputs a PLY file path containing the Gaussian splat.
+Reconstructs a 3D object from a single masked region in a 2D image. Outputs the 3D file and a turntable video preview.
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `image` | ImageUrlArtifact | Input image (RGB or RGBA) containing the object to reconstruct |
-| `mask` | ImageUrlArtifact | Binary mask image (white = object, black = background) |
-| `randomize_seed` | bool | Randomize the seed on each run |
-| `seed` | int | Random seed for reproducible results (default: 42) |
-| `config_path` | str | Path to the Hydra pipeline.yaml config file (default: `checkpoints/hf/pipeline.yaml`) |
-| `output_ply_path` | str | File path where the output Gaussian splat PLY will be saved |
-| `ply_path` (output) | str | Absolute path to the saved PLY file containing the 3D Gaussian splat |
+| Parameter | Type | Direction | Description |
+|-----------|------|-----------|-------------|
+| `model` | str | Input | HuggingFace model selector (downloads via Model Management if not cached) |
+| `image` | ImageUrlArtifact | Input | Input image (RGB or RGBA) containing the object to reconstruct |
+| `mask` | ImageUrlArtifact | Input | Binary mask image (white = object, black = background) |
+| `randomize_seed` | bool | Property | Randomize the seed on each run |
+| `seed` | int | Property | Random seed for reproducible results (default: 42) |
+| `output_format` | str | Property | Output format: `ply`, `obj`, or `glb` (default: `ply`) |
+| `output_file` | str | Property | Output filename (auto-increments in project outputs folder) |
+| `output_file_path` | str | Output | Absolute path to the saved 3D file |
+| `video_preview` | VideoUrlArtifact | Output | Turntable MP4 preview of the reconstructed object |
 
 ### Reconstruct Multi-Object 3D
 
-Reconstructs a merged 3D Gaussian splat scene from multiple masked objects in a single image. Runs inference once per mask, merges all Gaussian splats into a single scene, and outputs a PLY file.
+Reconstructs a merged 3D scene from multiple masked objects in a single image. Runs inference once per mask, merges all results, and outputs the 3D file with a turntable video preview.
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `image` | ImageUrlArtifact | Input image (RGB or RGBA) containing the objects to reconstruct |
-| `masks` | str | JSON array of image URLs, each a binary mask for one object |
-| `randomize_seed` | bool | Randomize the seed on each run |
-| `seed` | int | Random seed for reproducible results, applied to each object (default: 42) |
-| `config_path` | str | Path to the Hydra pipeline.yaml config file (default: `checkpoints/hf/pipeline.yaml`) |
-| `output_ply_path` | str | File path where the merged output Gaussian splat PLY will be saved |
-| `ply_path` (output) | str | Absolute path to the saved PLY file containing the merged 3D Gaussian splat scene |
+| Parameter | Type | Direction | Description |
+|-----------|------|-----------|-------------|
+| `model` | str | Input | HuggingFace model selector (downloads via Model Management if not cached) |
+| `image` | ImageUrlArtifact | Input | Input image (RGB or RGBA) containing the objects to reconstruct |
+| `masks` | str | Input | JSON array of image URLs, each a binary mask for one object |
+| `randomize_seed` | bool | Property | Randomize the seed on each run |
+| `seed` | int | Property | Random seed for reproducible results (default: 42) |
+| `output_format` | str | Property | Output format: `ply`, `obj`, or `glb` (default: `ply`) |
+| `output_file` | str | Property | Output filename (auto-increments in project outputs folder) |
+| `output_file_path` | str | Output | Absolute path to the saved 3D file |
+| `video_preview` | VideoUrlArtifact | Output | Turntable MP4 preview of the reconstructed scene |
 
-## Available Models
+## Model Download
 
-The following model is available from HuggingFace (gated - requires access request approval):
+The `facebook/sam-3d-objects` model is a gated HuggingFace repository (~12 GB). When the node is first added, it will show a **"Huggingface Model Download Required"** warning with a link to Model Management.
 
-| Model | Description |
-|-------|-------------|
-| `facebook/sam-3d-objects` | Full SAM 3D Objects model weights. Contains the `checkpoints/` directory with `pipeline.yaml` and associated model weights. Requires 32+ GB VRAM. |
-
-Models must be downloaded manually using the HuggingFace CLI after receiving access approval:
-
-```bash
-hf auth login
-hf download facebook/sam-3d-objects
-```
-
-The downloaded checkpoints directory should be placed (or symlinked) inside the `sam-3d-objects` submodule, matching the path expected by `config_path` (default: `checkpoints/hf/pipeline.yaml` relative to the submodule root).
+1. Request access at [huggingface.co/facebook/sam-3d-objects](https://huggingface.co/facebook/sam-3d-objects)
+2. Authenticate with `huggingface-cli login`
+3. Download the model via **Settings → Model Management** in the Griptape Nodes editor
+4. After download, a model selector dropdown will appear on the node
 
 ## Installation
 
@@ -80,15 +76,7 @@ The downloaded checkpoints directory should be placed (or symlinked) inside the 
    git clone --recurse-submodules https://github.com/griptape-ai/griptape-nodes-sam-3d-objects-library.git
    ```
 
-2. **Download the model checkpoints** from HuggingFace after access is approved:
-
-   ```bash
-   hf auth login
-   hf download facebook/sam-3d-objects --local-dir \
-     griptape-nodes-sam-3d-objects-library/griptape_nodes_sam_3d_objects_library/sam-3d-objects/checkpoints/hf
-   ```
-
-3. **Add the library** in the Griptape Nodes Editor:
+2. **Add the library** in the Griptape Nodes Editor:
 
    - Open the Settings menu and navigate to the *Libraries* settings
    - Click on *+ Add Library* at the bottom of the settings panel
@@ -96,9 +84,10 @@ The downloaded checkpoints directory should be placed (or symlinked) inside the 
      ```
      <workspace_directory>/griptape-nodes-sam-3d-objects-library/griptape_nodes_sam_3d_objects_library/griptape-nodes-library.json
      ```
-   - You can check your workspace directory with `gtn config show workspace_directory`
    - Close the Settings Panel
    - Click on *Refresh Libraries*
+
+3. **Download the model** via Settings → Model Management (search for `facebook/sam-3d-objects`).
 
 4. **Verify installation** by checking that the nodes appear in the node palette under the "3D Reconstruction" category.
 
@@ -107,22 +96,19 @@ The downloaded checkpoints directory should be placed (or symlinked) inside the 
 ### Reconstruct Single Object 3D
 
 1. Add a **Reconstruct Single Object 3D** node to your workflow.
-2. Connect an image artifact to the `image` input (the RGB or RGBA image containing your object).
-3. Connect a binary mask image artifact to the `mask` input (white pixels = object, black = background).
-4. Set `config_path` to the absolute path of `pipeline.yaml` inside the downloaded checkpoints directory, or leave it at the default if using the expected directory structure.
-5. Set `output_ply_path` to the file path where you want the PLY saved.
-6. Run the node. The `ply_path` output will contain the path to the saved PLY file, which can be loaded in a 3D viewer.
+2. Select the downloaded model from the dropdown (or follow the download prompt).
+3. Connect an image artifact to `image` and a binary mask to `mask`.
+4. Choose your desired `output_format` (ply, obj, or glb).
+5. Run the node. The 3D file is saved to the project outputs folder and the turntable preview appears in the `video_preview` output.
 
 ### Reconstruct Multi-Object 3D
 
 1. Add a **Reconstruct Multi-Object 3D** node to your workflow.
-2. Connect an image artifact to the `image` input.
-3. Set `masks` to a JSON array of image URL strings, one per object mask. For example:
-   ```json
-   ["/path/to/mask_0.png", "/path/to/mask_1.png", "/path/to/mask_2.png"]
-   ```
-4. Set `config_path` and `output_ply_path` as with the single-object node.
-5. Run the node. All Gaussians are merged into a single scene PLY file.
+2. Select the downloaded model from the dropdown.
+3. Connect an image artifact to `image`.
+4. Set `masks` to a JSON array of mask image URL strings.
+5. Choose your desired `output_format`.
+6. Run the node. All objects are merged into a single 3D scene.
 
 ## Troubleshooting
 

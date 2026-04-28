@@ -10,19 +10,23 @@
         "tags": ["Griptape", "AI", "Image", "3D", "Reconstruction", "Segmentation"],
         "dependencies": {
             "pip_dependencies": [
-                "torch",
-                "torchvision",
-                "torchaudio"
+                "torch==2.5.1",
+                "torchaudio==2.5.1",
+                "torchvision==0.20.1"
             ],
             "pip_install_flags": [
                 "--extra-index-url",
-                "https://download.pytorch.org/whl/cu128"
+                "https://download.pytorch.org/whl/cu121"
             ]
         },
         "resources": {
             "required": {
                 "compute": [["cuda"], "has_any"]
             }
+        },
+        "submodule_info": {
+            "url": "https://github.com/facebookresearch/sam-3d-objects.git",
+            "commit": "81a82373a3a7f4cbb00bd5b32aaf6b4d0f659ddd"
         }
     },
     "categories": [
