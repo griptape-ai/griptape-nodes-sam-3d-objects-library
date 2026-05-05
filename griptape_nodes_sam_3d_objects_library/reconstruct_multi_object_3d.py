@@ -10,7 +10,9 @@ import huggingface_hub
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact, VideoUrlArtifact
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import AsyncResult, SuccessFailureNode
-from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
+from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_file_parameter import (
+    HuggingFaceRepoFileParameter,
+)
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.exe_types.param_components.seed_parameter import SeedParameter
 from griptape_nodes.exe_types.param_types.parameter_video import ParameterVideo
@@ -35,9 +37,9 @@ class ReconstructMultiObject3D(SuccessFailureNode):
         # during parameter initialization, before _seed_param would otherwise exist.
         self._seed_param = SeedParameter(self)
 
-        self._hf_repo_param = HuggingFaceRepoParameter(
+        self._hf_repo_param = HuggingFaceRepoFileParameter(
             self,
-            repo_ids=["facebook/sam-3d-objects"],
+            repo_files=[("facebook/sam-3d-objects", "checkpoints/pipeline.yaml")],
         )
         self._hf_repo_param.add_input_parameters()
 

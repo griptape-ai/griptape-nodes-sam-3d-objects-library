@@ -10,7 +10,9 @@ import huggingface_hub
 from griptape.artifacts import ImageArtifact, ImageUrlArtifact, VideoUrlArtifact
 from griptape_nodes.exe_types.core_types import Parameter, ParameterMode
 from griptape_nodes.exe_types.node_types import AsyncResult, SuccessFailureNode
-from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_parameter import HuggingFaceRepoParameter
+from griptape_nodes.exe_types.param_components.huggingface.huggingface_repo_file_parameter import (
+    HuggingFaceRepoFileParameter,
+)
 from griptape_nodes.exe_types.param_components.project_file_parameter import ProjectFileParameter
 from griptape_nodes.exe_types.param_components.seed_parameter import SeedParameter
 from griptape_nodes.exe_types.param_types.parameter_video import ParameterVideo
@@ -24,8 +26,9 @@ logger = logging.getLogger("sam_3d_objects_library")
 class ReconstructSingleObject3D(SuccessFailureNode):
     """Reconstructs a 3D Gaussian splat of a single masked object from a 2D image.
 
-    Takes an image and a binary mask (white object on black background), runs SAM 3D Objects
-    inference, and outputs a PLY file path containing the Gaussian splat.
+    Takes an image and an optional binary mask (white object on black background). If no mask
+    is connected, the image's alpha channel is used when present; otherwise a full-image mask
+    is synthesized. Runs SAM 3D Objects inference and outputs a PLY file path.
     """
 
     def __init__(self, **kwargs) -> None:
@@ -35,9 +38,9 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         # during parameter initialization, before _seed_param would otherwise exist.
         self._seed_param = SeedParameter(self)
 
-        self._hf_repo_param = HuggingFaceRepoParameter(
+        self._hf_repo_param = HuggingFaceRepoFileParameter(
             self,
-            repo_ids=["facebook/sam-3d-objects"],
+            repo_files=[("facebook/sam-3d-objects", "checkpoints/pipeline.yaml")],
         )
         self._hf_repo_param.add_input_parameters()
 
@@ -58,7 +61,7 @@ class ReconstructSingleObject3D(SuccessFailureNode):
                 type="ImageUrlArtifact",
                 input_types=["ImageUrlArtifact", "ImageArtifact"],
                 default_value=None,
-                tooltip="Binary mask image (white = object, black = background) indicating which object to reconstruct",
+                tooltip="(Optional) Binary mask image (white = object, black = background). If not connected, the image's alpha channel is used when present; otherwise the full image is treated as the object.",
             )
         )
 
@@ -120,8 +123,8 @@ class ReconstructSingleObject3D(SuccessFailureNode):
             errors.append(ValueError("image is required and must be an ImageUrlArtifact or ImageArtifact"))
 
         mask = self.parameter_values.get("mask")
-        if not isinstance(mask, (ImageArtifact, ImageUrlArtifact)):
-            errors.append(ValueError("mask is required and must be an ImageUrlArtifact or ImageArtifact"))
+        if mask is not None and not isinstance(mask, (ImageArtifact, ImageUrlArtifact)):
+            errors.append(ValueError("mask, if provided, must be an ImageUrlArtifact or ImageArtifact"))
 
         return errors if errors else None
 
@@ -156,6 +159,32 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         tmp.close()
         return tmp.name
 
+    def _synthesize_mask_png(self, image_artifact: ImageArtifact | ImageUrlArtifact) -> str:
+        """Synthesize a mask PNG when no mask is provided.
+
+        Uses the image alpha channel when it is non-trivial (i.e. the image has transparent
+        regions), otherwise generates a full-white mask treating the whole image as the object.
+        """
+        from io import BytesIO  # noqa: PLC0415
+
+        image_bytes = self._artifact_to_bytes(image_artifact)
+        pil_image = Image.open(BytesIO(image_bytes))
+
+        if pil_image.mode == "RGBA":
+            alpha = pil_image.split()[-1]
+            alpha_min = cast(tuple[int, int], alpha.getextrema())[0]
+            if alpha_min < 255:
+                mask_image = alpha
+            else:
+                mask_image = Image.new("L", pil_image.size, 255)
+        else:
+            mask_image = Image.new("L", pil_image.size, 255)
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        mask_image.save(tmp.name)
+        tmp.close()
+        return tmp.name
+
     def process(self) -> AsyncResult[None]:
         """Kick off async inference."""
         yield lambda: self._run_inference()
@@ -168,8 +197,6 @@ class ReconstructSingleObject3D(SuccessFailureNode):
 
         if not isinstance(image_artifact, (ImageArtifact, ImageUrlArtifact)):
             raise ValueError("image is required")
-        if not isinstance(mask_artifact, (ImageArtifact, ImageUrlArtifact)):
-            raise ValueError("mask is required")
 
         # Resolve config path from HuggingFace cache
         repo_id, revision = self._hf_repo_param.get_repo_revision()
@@ -190,7 +217,10 @@ class ReconstructSingleObject3D(SuccessFailureNode):
 
         # Save inputs to temp files so the subprocess can read them
         image_path = self._save_artifact_to_temp(image_artifact, suffix=".png")
-        mask_path = self._save_artifact_to_temp(mask_artifact, suffix=".png")
+        if isinstance(mask_artifact, (ImageArtifact, ImageUrlArtifact)):
+            mask_path = self._save_artifact_to_temp(mask_artifact, suffix=".png")
+        else:
+            mask_path = self._synthesize_mask_png(image_artifact)
 
         try:
             request = {
