@@ -117,19 +117,24 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         Searches for a system CUDA toolkit (>= 12.x) since the pip nvidia-cuda-nvcc
         package doesn't include a full nvcc binary.
         """
-        # Prefer CUDA_HOME if already set
-        env_home = os.environ.get("CUDA_HOME")
-        if env_home and Path(env_home, "bin", "nvcc").exists():
-            return env_home
-        # Search common system locations
-        for candidate in sorted(Path("/usr/local").glob("cuda-12.*"), reverse=True):
-            if (candidate / "bin" / "nvcc").exists():
-                return str(candidate)
-        if Path("/usr/local/cuda/bin/nvcc").exists():
-            return "/usr/local/cuda"
+        import shutil
+
+        nvcc_exe = "nvcc.exe" if sys.platform == "win32" else "nvcc"
+
+        # Prefer explicit env vars (CUDA_HOME on Linux/Mac, CUDA_PATH on Windows)
+        for var in ("CUDA_HOME", "CUDA_PATH"):
+            candidate = os.environ.get(var)
+            if candidate and Path(candidate, "bin", nvcc_exe).exists():
+                return candidate
+
+        # Fall back to locating nvcc on PATH
+        nvcc = shutil.which(nvcc_exe) or shutil.which("nvcc")
+        if nvcc:
+            return str(Path(nvcc).parent.parent)
+
         raise RuntimeError(
             "No usable CUDA toolkit found. Install the CUDA toolkit (>=12.x) "
-            "or set CUDA_HOME to a directory containing bin/nvcc."
+            "or set CUDA_HOME / CUDA_PATH to a directory containing bin/nvcc."
         )
 
     def _get_submodule_commit(self, submodule_path: Path) -> str:
