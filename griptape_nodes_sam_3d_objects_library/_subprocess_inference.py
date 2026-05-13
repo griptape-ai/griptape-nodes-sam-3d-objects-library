@@ -29,7 +29,16 @@ def _setup(submodule_root: str) -> None:
         if p not in sys.path:
             sys.path.insert(0, p)
     if "CONDA_PREFIX" not in os.environ:
-        os.environ["CONDA_PREFIX"] = os.environ.get("CUDA_HOME", "/usr/local/cuda")
+        import shutil
+
+        nvcc = shutil.which("nvcc")
+        cuda_home = (
+            os.environ.get("CUDA_HOME")
+            or os.environ.get("CUDA_PATH")
+            or (os.path.dirname(os.path.dirname(nvcc)) if nvcc else None)
+        )
+        if cuda_home:
+            os.environ["CONDA_PREFIX"] = cuda_home
     os.environ["LIDRA_SKIP_INIT"] = "true"
 
 
