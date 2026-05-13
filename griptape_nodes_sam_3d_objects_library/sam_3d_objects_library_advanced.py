@@ -111,30 +111,107 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         )
         return result.stdout.strip()
 
-    def _get_cuda_home(self) -> str:
-        """Return a usable CUDA toolkit path with nvcc for building extensions.
+    def _get_torch_cuda_version(self) -> str | None:
+        """Return the major.minor CUDA version torch was compiled against (e.g. '12.1'), or None."""
+        venv_python = self._get_venv_python_path()
+        result = subprocess.run(
+            [str(venv_python), "-c", "import torch; print(torch.version.cuda)"],
+            capture_output=True,
+            text=True,
+        )
+        v = result.stdout.strip()
+        if not v or v == "None":
+            return None
+        parts = v.split(".")
+        return f"{parts[0]}.{parts[1]}" if len(parts) >= 2 else v
 
-        Searches for a system CUDA toolkit (>= 12.x) since the pip nvidia-cuda-nvcc
-        package doesn't include a full nvcc binary.
+    def _toolkit_version(self, cuda_home: str) -> str | None:
+        """Return the major.minor version of a CUDA toolkit by reading its version.json."""
+        import json as _json
+
+        version_json = Path(cuda_home, "version.json")
+        if not version_json.exists():
+            return None
+        try:
+            data = _json.loads(version_json.read_text())
+            v = data.get("cuda", {}).get("version", "")
+            parts = v.split(".")
+            if len(parts) >= 2:
+                return f"{parts[0]}.{parts[1]}"
+        except Exception:
+            pass
+        return None
+
+    def _get_gpu_arch_list(self) -> str:
+        """Return TORCH_CUDA_ARCH_LIST string based on the GPUs present in the venv.
+
+        Queries all available CUDA devices and builds a semicolon-separated list of
+        'major.minor' compute capabilities, with '+PTX' appended to the highest entry
+        so kernels can JIT-forward-compile for future GPU generations.
+        """
+        venv_python = self._get_venv_python_path()
+        script = (
+            "import torch; "
+            "avail = torch.cuda.is_available(); "
+            "caps = sorted(set(torch.cuda.get_device_capability(i) for i in range(torch.cuda.device_count()))) if avail else []; "
+            "print(avail, *[f'{m}.{n}' for m, n in caps])"
+        )
+        result = subprocess.run(
+            [str(venv_python), "-c", script],
+            capture_output=True,
+            text=True,
+        )
+        parts = result.stdout.strip().split()
+        if not parts or parts[0] != "True":
+            raise RuntimeError(
+                "No CUDA-capable GPU detected. The SAM 3D Objects library requires a CUDA GPU. "
+                "Ensure your GPU drivers are installed and torch.cuda.is_available() returns True."
+            )
+        caps = parts[1:]
+        if not caps:
+            raise RuntimeError("No GPU compute capabilities detected. Cannot determine TORCH_CUDA_ARCH_LIST.")
+        caps[-1] = caps[-1] + "+PTX"
+        return ";".join(caps)
+
+    def _get_cuda_home(self) -> str:
+        """Return a usable CUDA toolkit path whose version matches torch's CUDA build.
+
+        Checks CUDA_HOME / CUDA_PATH env vars and nvcc on PATH. When the found toolkit
+        version doesn't match what torch was compiled against, raises a clear error
+        rather than letting the build fail deep inside setuptools.
         """
         import shutil
 
         nvcc_exe = "nvcc.exe" if sys.platform == "win32" else "nvcc"
+        torch_cuda = self._get_torch_cuda_version()
+
+        def _check_and_return(candidate: str) -> str:
+            toolkit_ver = self._toolkit_version(candidate)
+            if torch_cuda and toolkit_ver and not toolkit_ver.startswith(torch_cuda):
+                raise RuntimeError(
+                    f"CUDA version mismatch: the toolkit at '{candidate}' is CUDA {toolkit_ver}, "
+                    f"but PyTorch in this library's venv was compiled against CUDA {torch_cuda}. "
+                    f"Install CUDA {torch_cuda} alongside your existing toolkit and set "
+                    f"CUDA_HOME / CUDA_PATH to that directory before loading this library."
+                )
+            return candidate
 
         # Prefer explicit env vars (CUDA_HOME on Linux/Mac, CUDA_PATH on Windows)
         for var in ("CUDA_HOME", "CUDA_PATH"):
             candidate = os.environ.get(var)
             if candidate and Path(candidate, "bin", nvcc_exe).exists():
-                return candidate
+                return _check_and_return(candidate)
 
         # Fall back to locating nvcc on PATH
         nvcc = shutil.which(nvcc_exe) or shutil.which("nvcc")
         if nvcc:
-            return str(Path(nvcc).parent.parent)
+            return _check_and_return(str(Path(nvcc).parent.parent))
 
+        torch_hint = f"CUDA {torch_cuda} to match PyTorch, " if torch_cuda else ""
         raise RuntimeError(
-            "No usable CUDA toolkit found. Install the CUDA toolkit (>=12.x) "
-            "or set CUDA_HOME / CUDA_PATH to a directory containing bin/nvcc."
+            f"No usable CUDA toolkit found. Install the CUDA toolkit "
+            f"({torch_hint}>=12.x) and set CUDA_HOME / CUDA_PATH to a directory "
+            f"containing bin/nvcc."
         )
 
     def _get_submodule_commit(self, submodule_path: Path) -> str:
@@ -187,18 +264,35 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         venv_python = self._get_venv_python_path()
         self._ensure_pip()
 
-        torch_ver = self._get_torch_version()
         cuda_home = self._get_cuda_home()
-        kaolin_find_links = f"https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-{torch_ver}_cu121.html"
+        arch_list = self._get_gpu_arch_list()
 
         env = os.environ.copy()
         env["CUDA_HOME"] = cuda_home
         env["FORCE_CUDA"] = "1"
-        env["TORCH_CUDA_ARCH_LIST"] = "8.6"
-        logger.info(f"Using CUDA_HOME={cuda_home}")
+        env["TORCH_CUDA_ARCH_LIST"] = arch_list
+        logger.info(f"Using CUDA_HOME={cuda_home}, TORCH_CUDA_ARCH_LIST={arch_list}")
 
         def _pip(args: list[str]) -> None:
             subprocess.check_call([str(venv_python), "-m", "pip", "install", *args], env=env)
+
+        # --- Step 0: CUDA-enabled PyTorch (must come before everything else) ---
+        # CPU-only torch wheels omit the C++ extension headers (ATen/TensorUtils.h etc.)
+        # that gsplat and pytorch3d need at compile time. Install from the PyTorch CUDA 12.1
+        # index so the venv has a full CUDA build before any source-compiled extension runs.
+        logger.info("Installing PyTorch with CUDA 12.1 support...")
+        _pip(
+            [
+                "--index-url",
+                "https://download.pytorch.org/whl/cu121",
+                "torch",
+                "torchvision",
+                "torchaudio",
+            ]
+        )
+
+        torch_ver = self._get_torch_version()
+        kaolin_find_links = f"https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-{torch_ver}_cu121.html"
 
         # --- Step 1: kaolin from NVIDIA S3 (wheel only, no deps) ---
         logger.info(f"Installing kaolin from {kaolin_find_links}...")

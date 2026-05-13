@@ -19,7 +19,6 @@ from typing import Any
 
 import numpy as np
 import torch
-from pytorch3d.transforms import Transform3d, quaternion_to_matrix
 
 
 def _setup(submodule_root: str) -> None:
@@ -109,13 +108,15 @@ def _run_single(request: dict) -> dict:
 
 
 # From sam3d github: https://github.com/facebookresearch/sam-3d-objects/blob/main/sam3d_objects/data/dataset/tdfy/transforms_3d.py
-def compose_transform(scale: torch.Tensor, rotation: torch.Tensor, translation: torch.Tensor) -> Transform3d:
+def compose_transform(scale: torch.Tensor, rotation: torch.Tensor, translation: torch.Tensor) -> "Any":
     """
     Args:
         scale: (..., 3) tensor of scale factors
         rotation: (..., 3, 3) tensor of rotation matrices
         translation: (..., 3) tensor of translation vectors
     """
+    from pytorch3d.transforms import Transform3d  # noqa: PLC0415
+
     tfm = Transform3d(dtype=scale.dtype, device=scale.device)
     return tfm.scale(scale).rotate(rotation).translate(translation)
 
@@ -123,6 +124,7 @@ def compose_transform(scale: torch.Tensor, rotation: torch.Tensor, translation: 
 # From sam3d github issues: https://github.com/facebookresearch/sam-3d-objects/issues/56#issuecomment-3614031150
 def make_scene_untextured_separate_meshes(*outputs, in_place=False):
     import trimesh
+    from pytorch3d.transforms import Transform3d, quaternion_to_matrix  # noqa: PLC0415
 
     _R_ZUP_TO_YUP = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], dtype=np.float32)
     _R_YUP_TO_ZUP = _R_ZUP_TO_YUP.T
