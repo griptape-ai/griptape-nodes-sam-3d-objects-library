@@ -141,7 +141,7 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         return self._get_library_root() / ".installed_commit"
 
     def _write_installed_sentinel(self, submodule_path: Path) -> None:
-        self._get_installed_sentinel().write_text(self._get_submodule_commit(submodule_path))
+        self._get_installed_sentinel().write_text(self._get_submodule_commit(submodule_path), encoding="utf-8")
 
     def _is_installed(self, submodule_path: Path) -> bool:
         """Return True only if deps are installed AND match the currently-pinned submodule commit.
@@ -152,7 +152,7 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         sentinel = self._get_installed_sentinel()
         if not sentinel.exists():
             return False
-        if sentinel.read_text().strip() != self._get_submodule_commit(submodule_path):
+        if sentinel.read_text(encoding="utf-8").strip() != self._get_submodule_commit(submodule_path):
             return False
         # Verify a key dependency is actually importable in the venv
         venv_python = self._get_venv_python_path()
