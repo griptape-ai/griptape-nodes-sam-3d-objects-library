@@ -5,7 +5,7 @@
     "metadata": {
         "author": "Griptape, Inc.",
         "description": "SAM 3D Objects is a foundation model that reconstructs full 3D shape geometry, texture, and spatial layout from a single 2D image. Given an image and a binary object mask, it produces a Gaussian splat (PLY format) representing the 3D structure of the masked object. It supports both single-object and multi-object reconstruction workflows and handles real-world challenges such as occlusion, clutter, and unusual poses.",
-        "library_version": "0.1.0",
+        "library_version": "0.1.1",
         "engine_version": "0.80.0",
         "tags": ["Griptape", "AI", "Image", "3D", "Reconstruction", "Segmentation"],
         "dependencies": {
