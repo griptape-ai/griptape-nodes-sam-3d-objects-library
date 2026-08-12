@@ -192,9 +192,6 @@ class <ClassName>LibraryAdvanced(AdvancedNodeLibrary):
         if submodule_dir.exists() and any(submodule_dir.iterdir()):
             logger.info("Submodule already initialized")
             return submodule_dir
-        # The git CLI rather than pygit2: the engine dropped pygit2 (its bundled TLS trust
-        # store breaks on some platforms) and requires git on PATH, so it is the one tool
-        # guaranteed to be here.
         subprocess.check_call(
             ["git", "-C", str(library_root.parent), "submodule", "update", "--init", "--recursive"]
         )
@@ -315,7 +312,7 @@ Write the new manifest JSON to `<package-dir>/griptape-nodes-library.json`. Use 
 
 **Building `pip_dependencies`**:
 - Leave as an empty array `[]`
-- Use the `git` CLI (via `subprocess`) for any git operations - the engine requires git on PATH, so it is always available. Do NOT use `pygit2`; the engine no longer ships it
+- Prefer the `git` CLI via `subprocess` for git operations over adding a git library here
 - All other dependencies are installed by the advanced library from the submodule's `requirements.txt` at load time
 - Do NOT include `griptape-nodes` itself
 
