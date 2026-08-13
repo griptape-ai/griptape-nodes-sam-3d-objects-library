@@ -5,7 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pygit2
 from griptape_nodes.node_library.advanced_node_library import AdvancedNodeLibrary
 from griptape_nodes.node_library.library_registry import Library, LibrarySchema
 
@@ -134,8 +133,10 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
 
     def _get_submodule_commit(self, submodule_path: Path) -> str:
         """Return the HEAD commit SHA of the submodule (the version pinned by the library author)."""
-        repo = pygit2.Repository(str(submodule_path))
-        return str(repo.head.target)
+        # The git CLI rather than pygit2: the engine dropped pygit2 (its bundled TLS trust
+        # store breaks on some platforms) and requires git on PATH, so it is the one tool
+        # guaranteed to be here.
+        return subprocess.check_output(["git", "-C", str(submodule_path), "rev-parse", "HEAD"], text=True).strip()
 
     def _get_installed_sentinel(self) -> Path:
         return self._get_library_root() / ".installed_commit"
