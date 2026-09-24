@@ -130,11 +130,16 @@ class ReconstructSingleObject3D(SuccessFailureNode):
         return os.path.join(os.path.dirname(__file__), "sam-3d-objects")
 
     def _get_venv_python(self) -> str:
+        """Python of the library's execution environment, which holds torch and the CUDA extensions.
+
+        The edit-time venv deliberately holds none of them, so this node can be built on a machine
+        that cannot run it.
+        """
         assert __file__ is not None
         lib_root = os.path.dirname(__file__)
         if sys.platform == "win32":
-            return os.path.join(lib_root, ".venv", "Scripts", "python.exe")
-        return os.path.join(lib_root, ".venv", "bin", "python")
+            return os.path.join(lib_root, ".venv-exec", "Scripts", "python.exe")
+        return os.path.join(lib_root, ".venv-exec", "bin", "python")
 
     def _artifact_to_bytes(self, artifact: ImageArtifact | ImageUrlArtifact) -> bytes:
         """Read raw bytes from either an ImageArtifact (bytes value) or ImageUrlArtifact (path value)."""

@@ -463,6 +463,10 @@ dependencies = [
 name = "griptape-nodes-sam-3d-objects-library"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "pillow" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -474,6 +478,10 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "huggingface-hub", specifier = ">=1.9.0" },
+    { name = "pillow", specifier = ">=11.3.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [
