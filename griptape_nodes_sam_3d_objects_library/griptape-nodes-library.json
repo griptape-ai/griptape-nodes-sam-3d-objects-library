@@ -6,7 +6,7 @@
         "author": "Griptape, Inc.",
         "description": "SAM 3D Objects is a foundation model that reconstructs full 3D shape geometry, texture, and spatial layout from a single 2D image. Given an image and a binary object mask, it produces a Gaussian splat (PLY format) representing the 3D structure of the masked object. It supports both single-object and multi-object reconstruction workflows and handles real-world challenges such as occlusion, clutter, and unusual poses.",
         "library_version": "0.2.0",
-        "engine_version": "0.80.0",
+        "engine_version": "0.102.0",
         "tags": [
             "Griptape",
             "AI",
@@ -24,7 +24,7 @@
         "dependencies": {
             "pip_dependencies": [
                 "pillow>=11.3.0",
-                "huggingface-hub>=1.9.0"
+                "huggingface-hub>=1.9.0,<2"
             ],
             "pip_dependencies_exec": [
                 "torch==2.5.1",
@@ -63,8 +63,8 @@
                 "hydra-core==1.3.2"
             ],
             "pip_install_flags": [
-                "--extra-index-url",
-                "https://download.pytorch.org/whl/cu121"
+                "--preview",
+                "--torch-backend=auto"
             ]
         },
         "resources": {
