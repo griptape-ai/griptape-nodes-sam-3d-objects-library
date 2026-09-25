@@ -15,14 +15,14 @@ logger = logging.getLogger("sam_3d_objects_library")
 class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
     def before_library_nodes_loaded(self, library_data: LibrarySchema, library: Library) -> None:
         logger.info(f"Loading '{library_data.name}' library...")
-        submodule_path = self._init_submodule()
         if not GriptapeNodes.LibraryManager().is_worker:
-            # The build below compiles gsplat and pytorch3d against .venv-exec and needs a system
-            # CUDA toolkit. Only the worker imports those extensions, and an orchestrator that
-            # merely edits the workflow is not required to have nvcc, so building here would fail
-            # library load on machines that can legitimately edit these nodes.
+            # The submodule and the gsplat and pytorch3d build against .venv-exec are only used by
+            # the worker, and the build needs a system CUDA toolkit. An orchestrator that merely
+            # edits the workflow is not required to have nvcc, so building here would fail library
+            # load on machines that can legitimately edit these nodes.
             logger.info("Edit-time load: the execution environment is built in the worker")
             return
+        submodule_path = self._init_submodule()
         if not self._is_installed(submodule_path):
             self._install_from_requirements(submodule_path)
             self._apply_patches(submodule_path)
