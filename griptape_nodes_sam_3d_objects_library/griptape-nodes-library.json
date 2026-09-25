@@ -1,12 +1,12 @@
 {
     "name": "Griptape Nodes SAM 3D Objects Library",
-    "library_schema_version": "0.5.0",
+    "library_schema_version": "0.12.0",
     "advanced_library_path": "sam_3d_objects_library_advanced.py",
     "metadata": {
         "author": "Griptape, Inc.",
         "description": "SAM 3D Objects is a foundation model that reconstructs full 3D shape geometry, texture, and spatial layout from a single 2D image. Given an image and a binary object mask, it produces a Gaussian splat (PLY format) representing the 3D structure of the masked object. It supports both single-object and multi-object reconstruction workflows and handles real-world challenges such as occlusion, clutter, and unusual poses.",
-        "library_version": "0.2.0",
-        "engine_version": "0.80.0",
+        "library_version": "0.3.0",
+        "engine_version": "0.102.0",
         "tags": [
             "Griptape",
             "AI",
@@ -15,15 +15,58 @@
             "Reconstruction",
             "Segmentation"
         ],
+        "declarations": [
+            {
+                "type": "worker_mode_compatibility",
+                "compatibility": "COMPATIBLE"
+            }
+        ],
         "dependencies": {
             "pip_dependencies": [
+                "pillow>=11.3.0",
+                "huggingface-hub>=1.9.0,<2"
+            ],
+            "pip_dependencies_exec": [
                 "torch==2.5.1",
                 "torchaudio==2.5.1",
-                "torchvision==0.20.1"
+                "torchvision==0.20.1",
+                "numpy<2.0",
+                "loguru",
+                "astor",
+                "opencv-python",
+                "easydict",
+                "python-igraph",
+                "imageio",
+                "imageio-ffmpeg",
+                "lightning",
+                "omegaconf",
+                "open3d",
+                "optree",
+                "plotly",
+                "plyfile",
+                "pymeshfix",
+                "pyvista",
+                "safetensors",
+                "seaborn==0.13.2",
+                "timm",
+                "trimesh",
+                "xatlas",
+                "spconv-cu121==2.3.8",
+                "ipycanvas",
+                "ipyevents",
+                "jupyter-client<8",
+                "pygltflib",
+                "tornado",
+                "usd-core",
+                "warp-lang",
+                "gradio==5.49.0",
+                "hydra-core==1.3.2"
             ],
             "pip_install_flags": [
                 "--extra-index-url",
-                "https://download.pytorch.org/whl/cu121"
+                "https://download.pytorch.org/whl/cu121",
+                "--index-strategy",
+                "unsafe-best-match"
             ]
         },
         "resources": {

@@ -1,7 +1,9 @@
 """Subprocess entry-point for SAM 3D Objects inference.
 
-This script is executed by the library's venv Python in a subprocess so that
-torch 2.5.1 + kaolin can load without conflicting with the engine's torch version.
+This script is executed by the Python of the library's execution environment
+(.venv-exec), which holds torch 2.5.1, kaolin and the CUDA extensions. Nothing here
+is importable from a node module: the orchestrator imports those to build the node
+classes and has none of these packages.
 
 Protocol (over stdin/stdout as JSON):
   Request:  {"action": "single"|"multi", "image_path": str, "mask_paths": [str],
