@@ -24,7 +24,7 @@
         "dependencies": {
             "pip_dependencies": [
                 "pillow>=11.3.0",
-                "huggingface-hub>=1.9.0,<2"
+                "huggingface-hub>=1.9.0"
             ],
             "pip_dependencies_exec": [
                 "torch==2.5.1",
