@@ -55,6 +55,9 @@ version/publish: ## Create and push git tags.
 	@git push origin "v$$(make version/get)"
 	@git push -f origin stable
 
+# The execution set is declared only in the library manifest, under pip_dependencies_exec.
+# It cannot also be a pyproject extra: uv co-resolves extras with the dev group, and gradio's
+# pydantic ceiling conflicts with the engine's floor, so the project would no longer lock.
 .PHONY: deps/sync
 deps/sync: ## Sync pip_dependencies in the library JSON from pyproject.toml.
 	@uv run python -c "\
@@ -76,7 +79,7 @@ install/core: deps/sync ## Install core dependencies.
 
 .PHONY: install/all
 install/all: deps/sync ## Install all dependencies.
-	@uv sync --all-groups --all-extras
+	@uv sync --all-groups
 
 .PHONY: install/dev
 install/dev: ## Install dev dependencies.

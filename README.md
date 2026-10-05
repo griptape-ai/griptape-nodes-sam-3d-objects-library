@@ -119,6 +119,11 @@ The `facebook/sam-3d-objects` model is a gated HuggingFace repository (~12 GB). 
   git submodule update --init --recursive
   ```
 
+### First Run Is Slow
+
+- The first library load builds gsplat and pytorch3d from source, which can take longer than the 600 second window a node run waits for. A node run started during the build fails with "its worker process did not finish loading the library within 600 seconds".
+- The build keeps going, and it is a one-time cost. Run the node again once the log reports "Inference dependencies installed successfully", or raise the `worker.library_load_timeout_s` setting.
+
 ### CUDA Not Available
 
 - Verify your NVIDIA GPU drivers and CUDA 12.1 are correctly installed.

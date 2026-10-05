@@ -7,6 +7,7 @@ from pathlib import Path
 
 from griptape_nodes.node_library.advanced_node_library import AdvancedNodeLibrary
 from griptape_nodes.node_library.library_registry import Library, LibrarySchema
+from griptape_nodes.retained_mode.griptape_nodes import GriptapeNodes
 
 logger = logging.getLogger("sam_3d_objects_library")
 
@@ -14,6 +15,13 @@ logger = logging.getLogger("sam_3d_objects_library")
 class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
     def before_library_nodes_loaded(self, library_data: LibrarySchema, library: Library) -> None:
         logger.info(f"Loading '{library_data.name}' library...")
+        if not GriptapeNodes.LibraryManager().is_worker:
+            # The submodule and the gsplat and pytorch3d build against .venv-exec are only used by
+            # the worker, and the build needs a system CUDA toolkit. An orchestrator that merely
+            # edits the workflow is not required to have nvcc, so building here would fail library
+            # load on machines that can legitimately edit these nodes.
+            logger.info("Edit-time load: the execution environment is built in the worker")
+            return
         submodule_path = self._init_submodule()
         if not self._is_installed(submodule_path):
             self._install_from_requirements(submodule_path)
@@ -31,10 +39,16 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         return Path(__file__).parent
 
     def _get_venv_python_path(self) -> Path:
+        """Python of the execution environment, where the heavy dependencies live.
+
+        The CUDA extensions built below link against that environment's torch and are imported
+        from it by the worker, so the build cannot target the edit-time venv.
+        """
         root = self._get_library_root()
+        venv = root / ".venv-exec"
         if sys.platform == "win32":
-            return root / ".venv" / "Scripts" / "python.exe"
-        return root / ".venv" / "bin" / "python"
+            return venv / "Scripts" / "python.exe"
+        return venv / "bin" / "python"
 
     def _init_submodules_from_gitmodules(self, gitmodules_path: Path) -> None:
         """Run git submodule update --init --recursive from the repo root."""
@@ -164,21 +178,15 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
         return result.returncode == 0
 
     def _install_from_requirements(self, submodule_path: Path) -> None:
-        """Install all inference dependencies required by sam-3d-objects.
+        """Install the inference dependencies that cannot be declared in the manifest.
 
-        The upstream requirements.inference.txt is incomplete — many transitive
-        dependencies needed at runtime are only listed in the full requirements.txt
-        (which contains many unrelated dev packages).  Additionally, several packages
-        require special install procedures:
-          - kaolin: must come from NVIDIA's S3 wheels matched to the torch+cuda version.
-          - gsplat / pytorch3d: must be built from source with --no-build-isolation
-            and CUDA_HOME pointing at a system CUDA toolkit.
-          - MoGe / utils3d: must be installed from specific git commits.
-          - spconv: needs the -cu121 variant.
-          - numpy must stay <2.0 (kaolin constraint).
-
-        This method therefore ignores requirements.inference.txt and performs a
-        deterministic, ordered install sequence.
+        Everything installable as a plain wheel is declared under pip_dependencies_exec and is
+        already present in the execution environment by the time this runs. What is left needs
+        install arguments a flat dependency list cannot express:
+          - kaolin: NVIDIA's S3 wheels, matched to the torch+cuda version, with --no-index.
+          - gsplat / pytorch3d: built from source with --no-build-isolation and CUDA_HOME
+            pointing at a system CUDA toolkit.
+          - MoGe / utils3d: specific git commits, installed with --no-deps.
         """
         venv_python = self._get_venv_python_path()
         self._ensure_pip()
@@ -197,55 +205,12 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
             subprocess.check_call([str(venv_python), "-m", "pip", "install", *args], env=env)
 
         # --- Step 1: kaolin from NVIDIA S3 (wheel only, no deps) ---
+        # kaolin's own dependencies are declared under pip_dependencies_exec, since --no-deps
+        # here means pip installs none of them.
         logger.info(f"Installing kaolin from {kaolin_find_links}...")
         _pip(["--no-index", "--no-deps", "-f", kaolin_find_links, "kaolin==0.17.0"])
 
-        # --- Step 2: Pure-Python / wheel runtime deps ---
-        # These are packages the sam3d_objects code imports at runtime that aren't
-        # pulled in by requirements.inference.txt.
-        logger.info("Installing runtime dependencies...")
-        _pip(
-            [
-                "numpy<2.0",
-                "loguru",
-                "astor",
-                "opencv-python",
-                "easydict",
-                "python-igraph",
-                "imageio",
-                "imageio-ffmpeg",
-                "lightning",
-                "omegaconf",
-                "open3d",
-                "optree",
-                "plotly",
-                "plyfile",
-                "pymeshfix",
-                "pyvista",
-                "safetensors",
-                "seaborn==0.13.2",
-                "timm",
-                "trimesh",
-                "xatlas",
-                "spconv-cu121==2.3.8",
-                # kaolin dependencies (installed with --no-deps so we must provide these)
-                "ipycanvas",
-                "ipyevents",
-                "jupyter-client<8",
-                "pygltflib",
-                "tornado",
-                "usd-core",
-                "warp-lang",
-                # gradio (used by inference.py)
-                "gradio==5.49.0",
-                # huggingface_hub (used for checkpoint downloads)
-                "huggingface_hub",
-            ]
-        )
-        # Pin numpy back down (open3d/opencv may have upgraded it)
-        _pip(["numpy<2.0"])
-
-        # --- Step 3: Packages from git that need specific commits ---
+        # --- Step 2: Packages from git that need specific commits ---
         logger.info("Installing MoGe...")
         _pip(
             [
@@ -264,7 +229,7 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
             ]
         )
 
-        # --- Step 4: CUDA extensions built from source ---
+        # --- Step 3: CUDA extensions built from source ---
         logger.info("Building gsplat from source...")
         _pip(
             [
@@ -303,9 +268,6 @@ class Sam3DObjectsLibraryAdvanced(AdvancedNodeLibrary):
             logger.warning(f"Hydra patch script not found at {patch_script}, skipping")
             return
         venv_python = self._get_venv_python_path()
-        # hydra-core is required by the patch script but not in requirements.inference.txt
-        logger.info("Installing hydra-core for patching...")
-        subprocess.check_call([str(venv_python), "-m", "pip", "install", "hydra-core==1.3.2"])
         logger.info("Applying hydra patch...")
         subprocess.check_call([str(venv_python), str(patch_script)], cwd=str(submodule_path))
         logger.info("Hydra patch applied successfully")
