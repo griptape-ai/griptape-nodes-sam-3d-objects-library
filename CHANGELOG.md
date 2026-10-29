@@ -10,4 +10,4 @@ the `library_version` in `griptape_nodes_sam_3d_objects_library/griptape-nodes-l
 
 <!-- Entries go in changelog.d/, one file each. See changelog.d/README.md. -->
 
-[Unreleased]: https://github.com/griptape-ai/griptape-nodes-sam-3d-objects-library/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/griptape-ai/griptape-nodes-sam-3d-objects-library/compare/48306099dcd169f37704c9b3c2ad9319474468c5...HEAD
